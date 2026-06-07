@@ -35,7 +35,7 @@ export interface ImportFieldError {
 
 export interface ImportErrorItem {
   row: number
-  type: 'script' | 'host' | 'proficiency'
+  type: 'script' | 'host' | 'proficiency' | 'unknown'
   errors: string[]
   fieldErrors?: ImportFieldError[]
 }

@@ -1,16 +1,12 @@
-import { Response, NextFunction } from 'express'
+import { Response, NextFunction, Request } from 'express'
 import prisma from '../../prisma/client'
 import { TypedRequest, InferSchemaType } from '../../common/express'
-import { importBatchSchema, hostSchema, scriptSchema, importProficiencyDataSchema } from '../../common/schemas'
+import { importBatchSchema, importItemSchema, hostSchema, scriptSchema, importProficiencyDataSchema } from '../../common/schemas'
 import { ImportPreviewResult, ImportConfirmResult, ValidatedImportData } from '../../common/types'
 
-type ImportPreviewRequest = TypedRequest<
-  Record<string, never>,
-  Record<string, never>,
-  InferSchemaType<typeof importBatchSchema>
->
+type ImportPreviewRequest = Request
 
-type ImportConfirmRequest = ImportPreviewRequest
+type ImportConfirmRequest = Request
 
 const fieldLabels: Record<string, string> = {
   name: '名称',
@@ -36,10 +32,100 @@ const formatFieldError = (field: string, message: string, value?: unknown): stri
   return `${label}: ${message}${valueStr}`
 }
 
+const detectType = (item: unknown): 'script' | 'host' | 'proficiency' | 'unknown' => {
+  if (item && typeof item === 'object' && 'type' in item) {
+    const t = (item as any).type
+    if (t === 'script' || t === 'host' || t === 'proficiency') {
+      return t
+    }
+  }
+  return 'unknown'
+}
+
+const preValidateRequest = (body: unknown): {
+  valid: boolean
+  items?: InferSchemaType<typeof importBatchSchema>
+  errors: ValidatedImportData['errors']
+  total: number
+} => {
+  const errors: ValidatedImportData['errors'] = []
+
+  if (!Array.isArray(body)) {
+    errors.push({
+      row: 0,
+      type: 'unknown',
+      errors: ['请求体必须是JSON数组格式'],
+      fieldErrors: [{ field: 'root', message: '请求体必须是JSON数组格式', value: body }],
+    })
+    return { valid: false, errors, total: 0 }
+  }
+
+  if (body.length === 0) {
+    errors.push({
+      row: 0,
+      type: 'unknown',
+      errors: ['导入数据不能为空'],
+      fieldErrors: [{ field: 'root', message: '导入数据不能为空', value: [] }],
+    })
+    return { valid: false, errors, total: 0 }
+  }
+
+  const validItems: InferSchemaType<typeof importBatchSchema> = []
+
+  body.forEach((item, index) => {
+    const row = index + 1
+    const detectedType = detectType(item)
+
+    const parseResult = importItemSchema.safeParse(item)
+
+    if (!parseResult.success) {
+      parseResult.error.errors.forEach(e => {
+        const field = e.path.join('.')
+        const value = field ? (item as any)?.[field] : item
+        const message = formatFieldError(field, e.message, value)
+
+        const existing = errors.find(err => err.row === row)
+        if (existing) {
+          if (!existing.errors.includes(message)) {
+            existing.errors.push(message)
+          }
+          if (field) {
+            if (!existing.fieldErrors) {
+              existing.fieldErrors = []
+            }
+            if (!existing.fieldErrors.some(fe => fe.field === field && fe.message === message)) {
+              existing.fieldErrors.push({ field, message, value })
+            }
+          }
+        } else {
+          const errorItem: ValidatedImportData['errors'][0] = {
+            row,
+            type: detectedType === 'unknown' ? 'host' : detectedType,
+            errors: [message],
+          }
+          if (field) {
+            errorItem.fieldErrors = [{ field, message, value }]
+          }
+          errors.push(errorItem)
+        }
+      })
+    } else {
+      validItems.push(parseResult.data)
+    }
+  })
+
+  return {
+    valid: errors.length === 0,
+    items: validItems,
+    errors,
+    total: body.length,
+  }
+}
+
 const addErrorWithField = (
   result: ValidatedImportData,
   row: number,
-  type: 'script' | 'host' | 'proficiency',
+  type: 'script' | 'host' | 'proficiency' | 'unknown',
   error: string,
   field?: string,
   value?: unknown
@@ -326,14 +412,31 @@ const validateImportData = async (
 
 export const previewImport = async (req: ImportPreviewRequest, res: Response, next: NextFunction) => {
   try {
-    const items = req.body
+    const preValidation = preValidateRequest(req.body)
 
-    const validated = await validateImportData(items)
+    if (preValidation.items === undefined || preValidation.items.length === 0) {
+      const response: ImportPreviewResult = {
+        total: preValidation.total,
+        importable: 0,
+        errors: preValidation.errors,
+        summary: {
+          scripts: 0,
+          hosts: 0,
+          proficiencies: 0,
+        },
+      }
+      res.sendSuccess(response, '导入预览完成')
+      return
+    }
+
+    const validated = await validateImportData(preValidation.items)
+
+    const allErrors = [...preValidation.errors, ...validated.errors]
 
     const response: ImportPreviewResult = {
-      total: items.length,
+      total: preValidation.total,
       importable: validated.scripts.length + validated.hosts.length + validated.proficiencies.length,
-      errors: validated.errors,
+      errors: allErrors,
       summary: {
         scripts: validated.scripts.length,
         hosts: validated.hosts.length,
@@ -349,12 +452,19 @@ export const previewImport = async (req: ImportPreviewRequest, res: Response, ne
 
 export const confirmImport = async (req: ImportConfirmRequest, res: Response, next: NextFunction) => {
   try {
-    const items = req.body
+    const preValidation = preValidateRequest(req.body)
 
-    const validated = await validateImportData(items)
+    if (preValidation.items === undefined) {
+      res.sendError('请求格式错误，请检查数据格式', 400)
+      return
+    }
 
-    if (validated.errors.length > 0) {
-      res.sendError(`存在 ${validated.errors.length} 条验证错误，请先修正后再导入`, 400)
+    const validated = await validateImportData(preValidation.items)
+
+    const allErrors = [...preValidation.errors, ...validated.errors]
+
+    if (allErrors.length > 0) {
+      res.sendError(`存在 ${allErrors.length} 条验证错误，请先修正后再导入`, 400)
       return
     }
 
