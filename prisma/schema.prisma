@@ -1,0 +1,135 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+  EXTREME
+}
+
+enum ProficiencyLevel {
+  BEGINNER
+  INTERMEDIATE
+  PROFICIENT
+  EXPERT
+}
+
+enum SessionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+model Script {
+  id           Int               @id @default(autoincrement())
+  name         String            @unique
+  description  String?
+  minPlayers   Int
+  maxPlayers   Int
+  durationMin  Int
+  difficulty   Difficulty
+  coverImage   String?
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  sessions     Session[]
+  proficiencies HostProficiency[]
+
+  @@index([isActive])
+  @@index([difficulty])
+}
+
+model Host {
+  id            Int               @id @default(autoincrement())
+  name          String
+  phone         String            @unique
+  avatar        String?
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  sessions      Session[]
+  proficiencies HostProficiency[]
+
+  @@index([isActive])
+}
+
+model HostProficiency {
+  id        Int               @id @default(autoincrement())
+  hostId    Int
+  scriptId  Int
+  level     ProficiencyLevel
+  host      Host              @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  script    Script            @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+
+  @@unique([hostId, scriptId])
+  @@index([hostId])
+  @@index([scriptId])
+}
+
+model Session {
+  id            Int            @id @default(autoincrement())
+  scriptId      Int
+  hostId        Int
+  startTime     DateTime
+  endTime       DateTime
+  status        SessionStatus  @default(PENDING)
+  room          String?
+  price         Decimal        @db.Decimal(10, 2)
+  currentPlayers Int           @default(0)
+  maxPlayers    Int
+  remark        String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  script        Script         @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  host          Host           @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  bookings      Booking[]
+
+  @@index([scriptId])
+  @@index([hostId])
+  @@index([startTime])
+  @@index([status])
+  @@index([startTime, endTime])
+}
+
+model Customer {
+  id        Int       @id @default(autoincrement())
+  name      String
+  phone     String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  bookings  Booking[]
+}
+
+model Booking {
+  id          Int           @id @default(autoincrement())
+  sessionId   Int
+  customerId  Int
+  playerCount Int
+  status      BookingStatus @default(PENDING)
+  remark      String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  session     Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([customerId])
+  @@index([status])
+}
