@@ -59,10 +59,10 @@ type GetAccountByCustomerIdRequest = TypedRequest<
 
 export const activateMembershipHandler = async (req: ActivateMembershipRequest, res: Response, next: NextFunction) => {
   try {
-    const { customerId, initialBalance, operator, remark } = req.body
+    const { customerId, storeId, initialBalance, operator, remark } = req.body
 
     const result = await prisma.$transaction(async (tx) => {
-      return activateMembership(tx, customerId, new Prisma.Decimal(initialBalance), operator, remark)
+      return activateMembership(tx, customerId, new Prisma.Decimal(initialBalance), operator, remark, storeId)
     })
 
     res.sendSuccess(result, '会员开通成功')
@@ -73,10 +73,10 @@ export const activateMembershipHandler = async (req: ActivateMembershipRequest, 
 
 export const rechargeHandler = async (req: RechargeRequest, res: Response, next: NextFunction) => {
   try {
-    const { customerId, amount, operator, remark } = req.body
+    const { customerId, storeId, amount, operator, remark } = req.body
 
     const result = await prisma.$transaction(async (tx) => {
-      return recharge(tx, customerId, new Prisma.Decimal(amount), operator, remark)
+      return recharge(tx, customerId, new Prisma.Decimal(amount), operator, remark, storeId)
     })
 
     res.sendSuccess(result, '充值成功')
@@ -87,10 +87,10 @@ export const rechargeHandler = async (req: RechargeRequest, res: Response, next:
 
 export const consumeHandler = async (req: ConsumeRequest, res: Response, next: NextFunction) => {
   try {
-    const { customerId, amount, operator, remark } = req.body
+    const { customerId, storeId, amount, operator, remark } = req.body
 
     const result = await prisma.$transaction(async (tx) => {
-      return consume(tx, customerId, new Prisma.Decimal(amount), operator, remark)
+      return consume(tx, customerId, new Prisma.Decimal(amount), operator, remark, undefined, storeId)
     })
 
     res.sendSuccess(result, '扣款成功')
@@ -101,10 +101,10 @@ export const consumeHandler = async (req: ConsumeRequest, res: Response, next: N
 
 export const refundHandler = async (req: RefundRequest, res: Response, next: NextFunction) => {
   try {
-    const { customerId, amount, operator, remark, transactionId } = req.body
+    const { customerId, storeId, amount, operator, remark, transactionId } = req.body
 
     const result = await prisma.$transaction(async (tx) => {
-      return refund(tx, customerId, new Prisma.Decimal(amount), operator, remark, transactionId)
+      return refund(tx, customerId, new Prisma.Decimal(amount), operator, remark, transactionId, storeId)
     })
 
     res.sendSuccess(result, '退款成功')

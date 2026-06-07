@@ -3,6 +3,7 @@ import { AppError } from '../../middleware/errorHandler'
 
 export interface MembershipTransactionCreateData {
   accountId: number
+  storeId?: number
   type: MembershipTransactionType
   amount: Prisma.Decimal
   remark?: string
@@ -18,11 +19,20 @@ const createTransaction = async (
   balanceAfter: Prisma.Decimal,
   remark?: string,
   operator?: string,
-  relatedBookingId?: number
+  relatedBookingId?: number,
+  storeId?: number
 ) => {
+  if (storeId !== undefined) {
+    const store = await tx.store.findUnique({ where: { id: storeId } })
+    if (!store) {
+      throw new AppError('门店不存在', 404)
+    }
+  }
+
   return tx.membershipTransaction.create({
     data: {
       accountId,
+      storeId,
       type,
       amount,
       balanceAfter,
@@ -50,7 +60,8 @@ export const activateMembership = async (
   customerId: number,
   initialBalance: Prisma.Decimal,
   operator?: string,
-  remark?: string
+  remark?: string,
+  storeId?: number
 ) => {
   const customer = await tx.customer.findUnique({ where: { id: customerId } })
   if (!customer) {
@@ -88,7 +99,9 @@ export const activateMembership = async (
       initialBalance,
       initialBalance,
       remark || '开户赠送',
-      operator
+      operator,
+      undefined,
+      storeId
     )
   }
 
@@ -100,7 +113,8 @@ export const recharge = async (
   customerId: number,
   amount: Prisma.Decimal,
   operator?: string,
-  remark?: string
+  remark?: string,
+  storeId?: number
 ) => {
   const account = await getMembershipAccountByCustomerId(tx, customerId)
   if (!account) {
@@ -125,7 +139,9 @@ export const recharge = async (
     amount,
     newBalance,
     remark,
-    operator
+    operator,
+    undefined,
+    storeId
   )
 
   return { account: updatedAccount, transaction }
@@ -137,7 +153,8 @@ export const consume = async (
   amount: Prisma.Decimal,
   operator?: string,
   remark?: string,
-  relatedBookingId?: number
+  relatedBookingId?: number,
+  storeId?: number
 ) => {
   const account = await getMembershipAccountByCustomerId(tx, customerId)
   if (!account) {
@@ -166,7 +183,8 @@ export const consume = async (
     newBalance,
     remark,
     operator,
-    relatedBookingId
+    relatedBookingId,
+    storeId
   )
 
   return { account: updatedAccount, transaction }
@@ -178,7 +196,8 @@ export const refund = async (
   amount: Prisma.Decimal,
   operator?: string,
   remark?: string,
-  relatedBookingId?: number
+  relatedBookingId?: number,
+  storeId?: number
 ) => {
   const account = await getMembershipAccountByCustomerId(tx, customerId)
   if (!account) {
@@ -204,7 +223,8 @@ export const refund = async (
     newBalance,
     remark,
     operator,
-    relatedBookingId
+    relatedBookingId,
+    storeId
   )
 
   return { account: updatedAccount, transaction }
@@ -230,9 +250,14 @@ export const getTransactionList = async (
     where.account = { customerId }
   }
   if (storeId) {
-    where.relatedBooking = {
-      session: { storeId }
-    }
+    where.OR = [
+      { storeId },
+      {
+        relatedBooking: {
+          session: { storeId },
+        },
+      },
+    ]
   }
   if (type) where.type = type
   if (status) where.status = status
@@ -251,6 +276,7 @@ export const getTransactionList = async (
             customer: { select: { id: true, name: true, phone: true } },
           },
         },
+        store: { select: { id: true, name: true } },
         relatedBooking: {
           select: {
             id: true,

@@ -323,13 +323,18 @@ export const hostRecommendSchema = z.object({
 
 export const membershipActivateSchema = z.object({
   customerId: z.number().int().positive(),
+  storeId: z.coerce.number().int().positive().optional(),
   initialBalance: z.coerce.number().min(0).optional().default(0),
   operator: z.string().optional(),
   remark: z.string().optional(),
+}).refine(data => data.initialBalance <= 0 || data.storeId !== undefined, {
+  message: '开户赠送余额时必须指定门店',
+  path: ['storeId'],
 })
 
 export const membershipRechargeSchema = z.object({
   customerId: z.number().int().positive(),
+  storeId: z.coerce.number().int().positive(),
   amount: z.coerce.number().positive(),
   operator: z.string().optional(),
   remark: z.string().optional(),
@@ -337,6 +342,7 @@ export const membershipRechargeSchema = z.object({
 
 export const membershipConsumeSchema = z.object({
   customerId: z.number().int().positive(),
+  storeId: z.coerce.number().int().positive(),
   amount: z.coerce.number().positive(),
   operator: z.string().optional(),
   remark: z.string().optional(),
@@ -344,6 +350,7 @@ export const membershipConsumeSchema = z.object({
 
 export const membershipRefundSchema = z.object({
   customerId: z.number().int().positive(),
+  storeId: z.coerce.number().int().positive(),
   amount: z.coerce.number().positive(),
   operator: z.string().optional(),
   remark: z.string().optional(),
@@ -453,4 +460,3 @@ export const dailyCloseVoidSchema = z.object({
   operator: z.string().optional(),
   remark: z.string().optional(),
 })
-
