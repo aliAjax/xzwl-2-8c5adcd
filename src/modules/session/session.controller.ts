@@ -432,6 +432,8 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
     params.push(SessionStatus.CANCELLED, SessionStatus.COMPLETED)
     paramIndex += 2
 
+    conditions.push(`(s.max_players - s.current_players) > 0`)
+
     if (scriptId) {
       conditions.push(`s.script_id = $${paramIndex}`)
       params.push(scriptId)
@@ -471,7 +473,8 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
       paramIndex++
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const whereClause = `WHERE ${conditions.join(' AND ')}`
+    const countParams = [...params]
 
     const countQuery = `
       SELECT COUNT(*) as total
@@ -488,9 +491,9 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
         (s.max_players - s.current_players) as remaining_seats,
         json_build_object(
           'id', sc.id, 'name', sc.name, 'description', sc.description,
-          'min_players', sc.min_players, 'max_players', sc.max_players,
-          'duration_min', sc.duration_min, 'difficulty', sc.difficulty,
-          'cover_image', sc.cover_image
+          'minPlayers', sc.min_players, 'maxPlayers', sc.max_players,
+          'durationMin', sc.duration_min, 'difficulty', sc.difficulty,
+          'coverImage', sc.cover_image
         ) as script,
         json_build_object(
           'id', h.id, 'name', h.name, 'avatar', h.avatar
@@ -506,11 +509,11 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
       ORDER BY s.start_time ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
-    params.push(pageSize, (page - 1) * pageSize)
+    const dataParams = [...params, pageSize, (page - 1) * pageSize]
 
     const [countResult, dataResult] = await Promise.all([
-      prisma.$queryRawUnsafe<{ total: bigint }[]>(countQuery, ...params.slice(0, paramIndex - 2)),
-      prisma.$queryRawUnsafe(dataQuery, ...params),
+      prisma.$queryRawUnsafe<{ total: bigint }[]>(countQuery, ...countParams),
+      prisma.$queryRawUnsafe(dataQuery, ...dataParams),
     ])
 
     const total = Number(countResult[0]?.total || 0)
