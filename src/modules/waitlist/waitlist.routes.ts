@@ -16,6 +16,7 @@ import {
   waitlistConfirmSchema,
   idParamSchema,
   sessionIdParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 const router = Router()
@@ -23,10 +24,10 @@ const typedHandler = (handler: unknown): RequestHandler => handler as RequestHan
 
 router.post('/', validateBody(waitlistSchema), typedHandler(createWaitlistHandler))
 router.get('/', validateQuery(waitlistQuerySchema), typedHandler(getWaitlistListHandler))
-router.get('/:id', validateParams(idParamSchema), typedHandler(getWaitlistByIdHandler))
-router.put('/:id', validateParams(idParamSchema), validateBody(waitlistUpdateSchema), typedHandler(updateWaitlistHandler))
-router.delete('/:id', validateParams(idParamSchema), typedHandler(deleteWaitlistHandler))
-router.post('/:id/confirm', validateParams(idParamSchema), validateBody(waitlistConfirmSchema), typedHandler(confirmWaitlistHandler))
+router.get('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(getWaitlistByIdHandler))
+router.put('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), validateBody(waitlistUpdateSchema), typedHandler(updateWaitlistHandler))
+router.delete('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(deleteWaitlistHandler))
+router.post('/:id/confirm', validateParams(idParamSchema), validateQuery(detailQuerySchema), validateBody(waitlistConfirmSchema), typedHandler(confirmWaitlistHandler))
 router.post('/session/:sessionId/process', validateParams(sessionIdParamSchema), typedHandler(processWaitlistHandler))
 
 export default router

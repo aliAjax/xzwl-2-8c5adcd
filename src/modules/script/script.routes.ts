@@ -12,6 +12,7 @@ import {
   scriptUpdateSchema,
   paginationSchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 const router = Router()
@@ -19,7 +20,7 @@ const typedHandler = (handler: unknown): RequestHandler => handler as RequestHan
 
 router.post('/', validateBody(scriptSchema), typedHandler(createScript))
 router.get('/', validateQuery(paginationSchema), typedHandler(getScriptList))
-router.get('/:id', validateParams(idParamSchema), typedHandler(getScriptById))
+router.get('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(getScriptById))
 router.put('/:id', validateParams(idParamSchema), validateBody(scriptUpdateSchema), typedHandler(updateScript))
 router.delete('/:id', validateParams(idParamSchema), typedHandler(deleteScript))
 

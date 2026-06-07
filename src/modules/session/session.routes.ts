@@ -16,6 +16,8 @@ import {
   sessionQuerySchema,
   availableSessionQuerySchema,
   idParamSchema,
+  detailQuerySchema,
+  scheduleQuerySchema,
 } from '../../common/schemas'
 
 const router = Router()
@@ -24,8 +26,8 @@ const typedHandler = (handler: unknown): RequestHandler => handler as RequestHan
 router.post('/', validateBody(sessionSchema), typedHandler(createSession))
 router.get('/', validateQuery(sessionQuerySchema), typedHandler(getSessionList))
 router.get('/available', validateQuery(availableSessionQuerySchema), typedHandler(getAvailableSessions))
-router.get('/host/:hostId', validateParams(z.object({ hostId: z.coerce.number().int().positive() })), typedHandler(getHostSchedule))
-router.get('/:id', validateParams(idParamSchema), typedHandler(getSessionById))
+router.get('/host/:hostId', validateParams(z.object({ hostId: z.coerce.number().int().positive() })), validateQuery(scheduleQuerySchema), typedHandler(getHostSchedule))
+router.get('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(getSessionById))
 router.put('/:id', validateParams(idParamSchema), validateBody(sessionUpdateSchema), typedHandler(updateSession))
 router.delete('/:id', validateParams(idParamSchema), typedHandler(deleteSession))
 

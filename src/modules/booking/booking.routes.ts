@@ -12,6 +12,7 @@ import {
   bookingUpdateSchema,
   bookingQuerySchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 const router = Router()
@@ -19,8 +20,8 @@ const typedHandler = (handler: unknown): RequestHandler => handler as RequestHan
 
 router.post('/', validateBody(bookingSchema), typedHandler(createBooking))
 router.get('/', validateQuery(bookingQuerySchema), typedHandler(getBookingList))
-router.get('/:id', validateParams(idParamSchema), typedHandler(getBookingById))
+router.get('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(getBookingById))
 router.put('/:id', validateParams(idParamSchema), validateBody(bookingUpdateSchema), typedHandler(updateBooking))
-router.delete('/:id', validateParams(idParamSchema), typedHandler(deleteBooking))
+router.delete('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(deleteBooking))
 
 export default router

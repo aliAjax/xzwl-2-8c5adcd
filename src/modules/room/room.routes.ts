@@ -13,6 +13,8 @@ import {
   roomUpdateSchema,
   roomQuerySchema,
   idParamSchema,
+  detailQuerySchema,
+  scheduleQuerySchema,
 } from '../../common/schemas'
 
 const router = Router()
@@ -20,8 +22,8 @@ const typedHandler = (handler: unknown): RequestHandler => handler as RequestHan
 
 router.post('/', validateBody(roomSchema), typedHandler(createRoom))
 router.get('/', validateQuery(roomQuerySchema), typedHandler(getRoomList))
-router.get('/:id/schedule', validateParams(idParamSchema), typedHandler(getRoomSchedule))
-router.get('/:id', validateParams(idParamSchema), typedHandler(getRoomById))
+router.get('/:id/schedule', validateParams(idParamSchema), validateQuery(scheduleQuerySchema), typedHandler(getRoomSchedule))
+router.get('/:id', validateParams(idParamSchema), validateQuery(detailQuerySchema), typedHandler(getRoomById))
 router.put('/:id', validateParams(idParamSchema), validateBody(roomUpdateSchema), typedHandler(updateRoom))
 router.delete('/:id', validateParams(idParamSchema), typedHandler(deleteRoom))
 

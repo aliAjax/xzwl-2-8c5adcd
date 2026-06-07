@@ -9,6 +9,12 @@ export const detailQuerySchema = z.object({
   storeId: z.coerce.number().int().positive().optional(),
 })
 
+export const scheduleQuerySchema = z.object({
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+  storeId: z.coerce.number().int().positive().optional(),
+})
+
 export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
@@ -335,5 +341,4 @@ export const membershipTransactionQuerySchema = z.object({
 export const customerIdParamSchema = z.object({
   customerId: z.coerce.number().int().positive(),
 })
-
 

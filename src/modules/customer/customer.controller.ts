@@ -7,6 +7,7 @@ import {
   customerQuerySchema,
   customerUpdateSchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 type GetCustomerListRequest = TypedRequest<
@@ -17,7 +18,7 @@ type GetCustomerListRequest = TypedRequest<
 
 type GetCustomerByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
@@ -72,11 +73,17 @@ export const getCustomerList = async (req: GetCustomerListRequest, res: Response
 export const getCustomerById = async (req: GetCustomerByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
+
+    const bookingWhere = storeId !== undefined
+      ? { session: { storeId } }
+      : undefined
 
     const customer = await prisma.customer.findUnique({
       where: { id },
       include: {
         bookings: {
+          where: bookingWhere,
           take: 10,
           orderBy: { createdAt: 'desc' },
           include: {
@@ -90,13 +97,19 @@ export const getCustomerById = async (req: GetCustomerByIdRequest, res: Response
           },
         },
         _count: {
-          select: { bookings: true },
+          select: {
+            bookings: bookingWhere ? { where: bookingWhere } : true,
+          },
         },
       },
     })
 
     if (!customer) {
       throw new AppError('顾客不存在', 404)
+    }
+
+    if (storeId !== undefined && customer._count.bookings === 0) {
+      throw new AppError('顾客不属于该门店', 404)
     }
 
     res.sendSuccess(customer)
