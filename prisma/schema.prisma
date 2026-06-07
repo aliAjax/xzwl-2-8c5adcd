@@ -355,7 +355,7 @@ model StoreDailyClose {
   bookingSnapshots       StoreDailyCloseBooking[]
   transactionSnapshots   StoreDailyCloseTransaction[]
 
-  @@unique([storeId, businessDate, status])
+  @@index([storeId, businessDate, status])
   @@index([storeId])
   @@index([businessDate])
   @@index([status])

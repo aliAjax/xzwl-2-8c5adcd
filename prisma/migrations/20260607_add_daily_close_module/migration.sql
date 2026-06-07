@@ -82,7 +82,7 @@ CREATE TABLE "StoreDailyCloseTransaction" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "StoreDailyClose_storeId_businessDate_status_key" ON "StoreDailyClose"("storeId", "businessDate", "status");
+CREATE INDEX "StoreDailyClose_storeId_businessDate_status_idx" ON "StoreDailyClose"("storeId", "businessDate", "status");
 
 -- CreateIndex
 CREATE INDEX "StoreDailyClose_storeId_idx" ON "StoreDailyClose"("storeId");

@@ -1,6 +1,6 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { Prisma, SessionStatus, BookingStatus, MembershipTransactionType, MembershipTransactionStatus, StoreDailyCloseStatus, StoreDailyClose } from '@prisma/client'
+import { Prisma, SessionStatus, BookingStatus, MembershipTransactionType, MembershipTransactionStatus, StoreDailyCloseStatus } from '@prisma/client'
 import dayjs from 'dayjs'
 
 export interface DailyCloseCreateData {
@@ -80,7 +80,13 @@ const getMembershipTransactions = async (
             customer: {
               bookings: {
                 some: {
-                  session: { storeId },
+                  session: {
+                    storeId,
+                    startTime: {
+                      gte: startOfDay,
+                      lte: endOfDay,
+                    },
+                  },
                 },
               },
             },
@@ -224,13 +230,11 @@ export const createDailyClose = async (data: DailyCloseCreateData) => {
   const { startOfDay } = getDateRange(businessDate)
   const normalizedDate = startOfDay
 
-  const existingNormal = await prisma.storeDailyClose.findUnique({
+  const existingNormal = await prisma.storeDailyClose.findFirst({
     where: {
-      storeId_businessDate_status: {
-        storeId,
-        businessDate: normalizedDate,
-        status: StoreDailyCloseStatus.NORMAL,
-      },
+      storeId,
+      businessDate: normalizedDate,
+      status: StoreDailyCloseStatus.NORMAL,
     },
   })
 
@@ -405,13 +409,11 @@ export const voidAndRecreateDailyClose = async (id: number, data: DailyCloseVoid
 
 export const getDailyCloseByStoreAndDate = async (storeId: number, businessDate: Date) => {
   const { startOfDay } = getDateRange(businessDate)
-  return prisma.storeDailyClose.findUnique({
+  return prisma.storeDailyClose.findFirst({
     where: {
-      storeId_businessDate_status: {
-        storeId,
-        businessDate: startOfDay,
-        status: StoreDailyCloseStatus.NORMAL,
-      },
+      storeId,
+      businessDate: startOfDay,
+      status: StoreDailyCloseStatus.NORMAL,
     },
   })
 }
