@@ -9,6 +9,14 @@ import {
   bookingQuerySchema,
   idParamSchema,
 } from '../../common/schemas'
+import {
+  validatePlayerCount,
+  createBookingWithSessionUpdate,
+  updateBookingPlayerCount,
+  deleteBookingWithSessionUpdate,
+  getOrCreateCustomer,
+} from './booking.service'
+import { processPendingWaitlists } from '../waitlist/waitlist.service'
 
 type CreateBookingRequest = TypedRequest<
   Record<string, never>,
@@ -36,7 +44,7 @@ type GetBookingByIdRequest = TypedRequest<
 
 export const createBooking = async (req: CreateBookingRequest, res: Response, next: NextFunction) => {
   try {
-    const { sessionId, customerName, customerPhone, playerCount } = req.body
+    const { sessionId, customerName, customerPhone, playerCount, status, remark } = req.body
 
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
@@ -51,53 +59,17 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
       throw new AppError('场次已取消，无法预约', 400)
     }
 
-    if (session.currentPlayers + playerCount > session.maxPlayers) {
-      throw new AppError(
-        `场次剩余 ${session.maxPlayers - session.currentPlayers} 个位置，无法预约 ${playerCount} 人`,
-        400
-      )
-    }
-
-    let customer = await prisma.customer.findUnique({
-      where: { phone: customerPhone },
-    })
-
-    if (!customer) {
-      customer = await prisma.customer.create({
-        data: {
-          name: customerName,
-          phone: customerPhone,
-        },
-      })
-    }
+    validatePlayerCount(session.currentPlayers, session.maxPlayers, playerCount)
 
     const booking = await prisma.$transaction(async (tx) => {
-      const newBooking = await tx.booking.create({
-        data: {
-          sessionId,
-          customerId: customer.id,
-          playerCount,
-          status: req.body.status,
-          remark: req.body.remark,
-        },
-        include: {
-          session: {
-            include: {
-              script: { select: { id: true, name: true } },
-              host: { select: { id: true, name: true } },
-            },
-          },
-          customer: { select: { id: true, name: true, phone: true } },
-        },
-      })
+      const customer = await getOrCreateCustomer(tx, customerName, customerPhone)
 
-      await tx.session.update({
-        where: { id: sessionId },
-        data: {
-          currentPlayers: {
-            increment: playerCount,
-          },
-        },
+      const newBooking = await createBookingWithSessionUpdate(tx, {
+        sessionId,
+        customerId: customer.id,
+        playerCount,
+        status,
+        remark,
       })
 
       return newBooking
@@ -203,24 +175,18 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       throw new AppError('预约记录不存在', 404)
     }
 
+    const playerCountDecreased = playerCount !== undefined && playerCount < existingBooking.playerCount
+    const statusChangedToCancelled = status === 'CANCELLED' && existingBooking.status !== 'CANCELLED'
+    const shouldProcessWaitlist = playerCountDecreased || statusChangedToCancelled
+
     const booking = await prisma.$transaction(async (tx) => {
       if (playerCount !== undefined && playerCount !== existingBooking.playerCount) {
-        const diff = playerCount - existingBooking.playerCount
-        const newCurrentPlayers = existingBooking.session.currentPlayers + diff
-
-        if (newCurrentPlayers > existingBooking.session.maxPlayers) {
-          throw new AppError('人数超出场次最大限制', 400)
-        }
-        if (newCurrentPlayers < 0) {
-          throw new AppError('人数不能为负数', 400)
-        }
-
-        await tx.session.update({
-          where: { id: existingBooking.sessionId },
-          data: {
-            currentPlayers: newCurrentPlayers,
-          },
-        })
+        await updateBookingPlayerCount(
+          tx,
+          existingBooking.sessionId,
+          existingBooking.playerCount,
+          playerCount
+        )
       }
 
       const updatedBooking = await tx.booking.update({
@@ -240,7 +206,15 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       return updatedBooking
     })
 
-    res.sendSuccess(booking, '预约更新成功')
+    let waitlistResults: Array<{ waitlistId: number; bookingId: number; message: string }> = []
+    if (shouldProcessWaitlist) {
+      waitlistResults = await processPendingWaitlists(existingBooking.sessionId)
+    }
+
+    res.sendSuccess(
+      { booking, waitlistProcessed: waitlistResults.length, convertedWaitlists: waitlistResults },
+      '预约更新成功'
+    )
   } catch (error) {
     next(error)
   }
@@ -259,21 +233,20 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
     }
 
     await prisma.$transaction(async (tx) => {
-      await tx.booking.delete({
-        where: { id },
-      })
-
-      await tx.session.update({
-        where: { id: existingBooking.sessionId },
-        data: {
-          currentPlayers: {
-            decrement: existingBooking.playerCount,
-          },
-        },
-      })
+      await deleteBookingWithSessionUpdate(
+        tx,
+        existingBooking.id,
+        existingBooking.sessionId,
+        existingBooking.playerCount
+      )
     })
 
-    res.sendSuccess(null, '预约取消成功')
+    const waitlistResults = await processPendingWaitlists(existingBooking.sessionId)
+
+    res.sendSuccess(
+      { waitlistProcessed: waitlistResults.length, convertedWaitlists: waitlistResults },
+      '预约取消成功'
+    )
   } catch (error) {
     next(error)
   }

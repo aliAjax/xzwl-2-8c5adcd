@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus } from '@prisma/client'
+import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus } from '@prisma/client'
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -204,3 +204,38 @@ export const importItemSchema = z.discriminatedUnion('type', [
 export const importBatchSchema = z.array(importItemSchema).min(1, { message: '导入数据不能为空' })
 
 export const importConfirmSchema = importBatchSchema
+
+export const waitlistSchema = z.object({
+  sessionId: z.number().int().positive(),
+  customerName: z.string().min(1).max(50),
+  customerPhone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }),
+  playerCount: z.number().int().positive(),
+  remark: z.string().optional(),
+})
+
+export const waitlistUpdateSchema = z.object({
+  playerCount: z.number().int().positive().optional(),
+  status: z.nativeEnum(WaitlistStatus).optional(),
+  remark: z.string().optional(),
+}).refine(
+  data => Object.keys(data).length > 0,
+  { message: '至少需要提供一个更新字段' }
+)
+
+export const waitlistQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  sessionId: z.coerce.number().int().positive().optional(),
+  customerId: z.coerce.number().int().positive().optional(),
+  status: z.nativeEnum(WaitlistStatus).optional(),
+  keyword: z.string().optional(),
+})
+
+export const waitlistConfirmSchema = z.object({
+  status: z.nativeEnum(BookingStatus).optional().default(BookingStatus.PENDING),
+  remark: z.string().optional(),
+})
+
+export const sessionIdParamSchema = z.object({
+  sessionId: z.coerce.number().int().positive(),
+})

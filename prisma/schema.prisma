@@ -37,6 +37,13 @@ enum BookingStatus {
   CANCELLED
 }
 
+enum WaitlistStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
 model Script {
   id           Int               @id @default(autoincrement())
   name         String            @unique
@@ -114,6 +121,7 @@ model Session {
   host          Host           @relation(fields: [hostId], references: [id], onDelete: Cascade)
   room          Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
   bookings      Booking[]
+  waitlists     Waitlist[]
 
   @@index([scriptId])
   @@index([hostId])
@@ -130,6 +138,7 @@ model Customer {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   bookings  Booking[]
+  waitlists Waitlist[]
 }
 
 model Booking {
@@ -147,4 +156,22 @@ model Booking {
   @@index([sessionId])
   @@index([customerId])
   @@index([status])
+}
+
+model Waitlist {
+  id          Int            @id @default(autoincrement())
+  sessionId   Int
+  customerId  Int
+  playerCount Int
+  status      WaitlistStatus @default(PENDING)
+  remark      String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  session     Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  customer    Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([customerId])
+  @@index([status])
+  @@index([sessionId, status, createdAt])
 }
