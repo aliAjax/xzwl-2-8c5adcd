@@ -114,6 +114,17 @@ export const sessionQuerySchema = z.object({
   endDate: z.coerce.date().optional(),
 })
 
+export const availableSessionQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  scriptId: z.coerce.number().int().positive().optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+  playerCount: z.coerce.number().int().positive().optional(),
+  difficulty: z.nativeEnum(Difficulty).optional(),
+  keyword: z.string().optional(),
+})
+
 export const bookingSchema = z.object({
   sessionId: z.number().int().positive(),
   customerName: z.string().min(1).max(50),

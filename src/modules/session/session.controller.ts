@@ -8,6 +8,7 @@ import {
   sessionSchema,
   sessionUpdateSchema,
   sessionQuerySchema,
+  availableSessionQuerySchema,
   idParamSchema,
 } from '../../common/schemas'
 
@@ -38,6 +39,12 @@ type GetSessionByIdRequest = TypedRequest<
 type GetHostScheduleRequest = TypedRequest<
   { hostId: number },
   { startDate?: Date; endDate?: Date },
+  Record<string, never>
+>
+
+type GetAvailableSessionsRequest = TypedRequest<
+  Record<string, never>,
+  InferSchemaType<typeof availableSessionQuerySchema>,
   Record<string, never>
 >
 
@@ -399,6 +406,139 @@ export const getHostSchedule = async (req: GetHostScheduleRequest, res: Response
     })
 
     res.sendSuccess(schedule)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res: Response, next: NextFunction) => {
+  try {
+    const {
+      page,
+      pageSize,
+      scriptId,
+      startDate,
+      endDate,
+      playerCount,
+      difficulty,
+      keyword,
+    } = req.query
+
+    const conditions: string[] = []
+    const params: unknown[] = []
+    let paramIndex = 1
+
+    conditions.push(`s.status NOT IN ($${paramIndex}, $${paramIndex + 1})`)
+    params.push(SessionStatus.CANCELLED, SessionStatus.COMPLETED)
+    paramIndex += 2
+
+    if (scriptId) {
+      conditions.push(`s.script_id = $${paramIndex}`)
+      params.push(scriptId)
+      paramIndex++
+    }
+
+    if (startDate) {
+      conditions.push(`s.start_time >= $${paramIndex}`)
+      params.push(startDate)
+      paramIndex++
+    }
+
+    if (endDate) {
+      conditions.push(`s.end_time <= $${paramIndex}`)
+      params.push(endDate)
+      paramIndex++
+    }
+
+    if (difficulty) {
+      conditions.push(`sc.difficulty = $${paramIndex}`)
+      params.push(difficulty)
+      paramIndex++
+    }
+
+    if (keyword) {
+      conditions.push(`(sc.name ILIKE $${paramIndex} OR sc.description ILIKE $${paramIndex})`)
+      params.push(`%${keyword}%`)
+      paramIndex++
+    }
+
+    if (playerCount) {
+      conditions.push(`s.max_players >= $${paramIndex}`)
+      params.push(playerCount)
+      paramIndex++
+      conditions.push(`(s.max_players - s.current_players) >= $${paramIndex}`)
+      params.push(playerCount)
+      paramIndex++
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM "Session" s
+      INNER JOIN "Script" sc ON s.script_id = sc.id
+      ${whereClause}
+    `
+
+    const dataQuery = `
+      SELECT 
+        s.id, s.script_id, s.host_id, s.room_id, s.start_time, s.end_time, 
+        s.status, s.price, s.current_players, s.max_players, s.remark,
+        s.created_at, s.updated_at,
+        (s.max_players - s.current_players) as remaining_seats,
+        json_build_object(
+          'id', sc.id, 'name', sc.name, 'description', sc.description,
+          'min_players', sc.min_players, 'max_players', sc.max_players,
+          'duration_min', sc.duration_min, 'difficulty', sc.difficulty,
+          'cover_image', sc.cover_image
+        ) as script,
+        json_build_object(
+          'id', h.id, 'name', h.name, 'avatar', h.avatar
+        ) as host,
+        json_build_object(
+          'id', r.id, 'name', r.name, 'capacity', r.capacity
+        ) as room
+      FROM "Session" s
+      INNER JOIN "Script" sc ON s.script_id = sc.id
+      INNER JOIN "Host" h ON s.host_id = h.id
+      INNER JOIN "Room" r ON s.room_id = r.id
+      ${whereClause}
+      ORDER BY s.start_time ASC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `
+    params.push(pageSize, (page - 1) * pageSize)
+
+    const [countResult, dataResult] = await Promise.all([
+      prisma.$queryRawUnsafe<{ total: bigint }[]>(countQuery, ...params.slice(0, paramIndex - 2)),
+      prisma.$queryRawUnsafe(dataQuery, ...params),
+    ])
+
+    const total = Number(countResult[0]?.total || 0)
+
+    const resultList = (dataResult as unknown[]).map(item => {
+      const record = item as Record<string, unknown>
+      return {
+        id: record.id,
+        scriptId: record.script_id,
+        hostId: record.host_id,
+        roomId: record.room_id,
+        startTime: record.start_time,
+        endTime: record.end_time,
+        status: record.status,
+        price: record.price,
+        currentPlayers: record.current_players,
+        maxPlayers: record.max_players,
+        remark: record.remark,
+        createdAt: record.created_at,
+        updatedAt: record.updated_at,
+        remainingSeats: record.remaining_seats,
+        script: record.script,
+        host: record.host,
+        room: record.room,
+      }
+    })
+
+    res.sendSuccess(createPaginationResult(resultList, total, page, pageSize))
   } catch (error) {
     next(error)
   }
