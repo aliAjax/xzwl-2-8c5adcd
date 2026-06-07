@@ -303,6 +303,37 @@ export const createSchedulePlanWithDrafts = async (
   return result
 }
 
+const checkDraftInternalConflicts = (
+  drafts: { id: number; hostId: number; roomId: number; startTime: Date; endTime: Date; script?: { name: string } }[]
+): string[] => {
+  const conflicts: string[] = []
+
+  for (let i = 0; i < drafts.length; i++) {
+    for (let j = i + 1; j < drafts.length; j++) {
+      const draftA = drafts[i]
+      const draftB = drafts[j]
+
+      const hasOverlap = draftA.startTime < draftB.endTime && draftA.endTime > draftB.startTime
+
+      if (!hasOverlap) continue
+
+      if (draftA.hostId === draftB.hostId) {
+        conflicts.push(
+          `草案场次 ${draftA.id} 与 ${draftB.id} 主持人冲突 (主持人ID: ${draftA.hostId}, 时间: ${draftA.startTime.toLocaleString()}-${draftA.endTime.toLocaleString()})`
+        )
+      }
+
+      if (draftA.roomId === draftB.roomId) {
+        conflicts.push(
+          `草案场次 ${draftA.id} 与 ${draftB.id} 房间冲突 (房间ID: ${draftA.roomId}, 时间: ${draftA.startTime.toLocaleString()}-${draftA.endTime.toLocaleString()})`
+        )
+      }
+    }
+  }
+
+  return conflicts
+}
+
 export const confirmSchedulePlan = async (planId: number, operator?: string) => {
   const plan = await prisma.schedulePlan.findUnique({
     where: { id: planId },
@@ -338,7 +369,14 @@ export const confirmSchedulePlan = async (planId: number, operator?: string) => 
     throw new AppError(`存在 ${sessionsWithConflicts.length} 个场次有冲突，请先处理后再确认：${conflictDetails}`, 409)
   }
 
+  const internalConflicts = checkDraftInternalConflicts(plan.draftSessions)
+  if (internalConflicts.length > 0) {
+    const conflictDetails = internalConflicts.join('; ')
+    throw new AppError(`草案内部存在 ${internalConflicts.length} 个冲突，请先处理后再确认：${conflictDetails}`, 409)
+  }
+
   const result = await prisma.$transaction(async (tx) => {
+    const occupiedSlots: { id: number; hostId: number; roomId: number; startTime: Date; endTime: Date }[] = []
     const createdSessions = []
 
     for (const draft of plan.draftSessions) {
@@ -365,6 +403,22 @@ export const confirmSchedulePlan = async (planId: number, operator?: string) => 
       }
       if (draft.maxPlayers > room.capacity) {
         throw new AppError(`场次人数不能超过房间容量 ${room.capacity}`, 400)
+      }
+
+      for (const slot of occupiedSlots) {
+        const hasOverlap = draft.startTime < slot.endTime && draft.endTime > slot.startTime
+        if (hasOverlap && draft.hostId === slot.hostId) {
+          throw new AppError(
+            `场次 "${script.name}" 与本方案已创建场次 ${slot.id} 主持人冲突`,
+            409
+          )
+        }
+        if (hasOverlap && draft.roomId === slot.roomId) {
+          throw new AppError(
+            `场次 "${script.name}" 与本方案已创建场次 ${slot.id} 房间冲突`,
+            409
+          )
+        }
       }
 
       try {
@@ -397,6 +451,14 @@ export const confirmSchedulePlan = async (planId: number, operator?: string) => 
           host: { select: { id: true, name: true } },
           room: { select: { id: true, name: true, capacity: true } },
         },
+      })
+
+      occupiedSlots.push({
+        id: session.id,
+        hostId: draft.hostId,
+        roomId: draft.roomId,
+        startTime: draft.startTime,
+        endTime: draft.endTime,
       })
 
       createdSessions.push(session)
