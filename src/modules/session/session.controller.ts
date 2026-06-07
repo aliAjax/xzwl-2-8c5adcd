@@ -485,7 +485,7 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
 
     const dataQuery = `
       SELECT 
-        s."id", s."scriptId", s."hostId", s."roomId", s."startTime", s."endTime", 
+        s."id", s."scriptId", s."hostId", s."roomId", s."startTime", s."endTime",
         s."status", s."price", s."currentPlayers", s."maxPlayers", s."remark",
         s."createdAt", s."updatedAt",
         (s."maxPlayers" - s."currentPlayers") as "remainingSeats",
