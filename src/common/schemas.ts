@@ -299,8 +299,4 @@ export const customerIdParamSchema = z.object({
   customerId: z.coerce.number().int().positive(),
 })
 
-export const bookingConsumeSchema = z.object({
-  useMembership: z.boolean().optional().default(false),
-  amount: z.coerce.number().positive().optional(),
-  operator: z.string().optional(),
-})
+

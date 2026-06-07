@@ -93,7 +93,11 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
       return { booking: newBooking, membership: membershipResult }
     })
 
-    res.sendSuccess(result, result.membership ? '预约成功，已从会员余额扣款' : '预约成功')
+    const response = result.membership
+      ? { ...result.booking, membershipTransaction: result.membership.transaction }
+      : result.booking
+
+    res.sendSuccess(response, result.membership ? '预约成功，已从会员余额扣款' : '预约成功')
   } catch (error) {
     next(error)
   }
@@ -283,15 +287,17 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       ? '预约确认成功'
       : '预约更新成功'
 
-    res.sendSuccess(
-      {
-        booking: result.booking,
-        membership: result.membership,
-        waitlistProcessed: waitlistResults.length,
-        convertedWaitlists: waitlistResults,
-      },
-      message
-    )
+    const response: any = {
+      booking: result.booking,
+      waitlistProcessed: waitlistResults.length,
+      convertedWaitlists: waitlistResults,
+    }
+
+    if (result.membership) {
+      response.membershipTransaction = result.membership.transaction
+    }
+
+    res.sendSuccess(response, message)
   } catch (error) {
     next(error)
   }
