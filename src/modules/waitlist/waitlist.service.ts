@@ -8,6 +8,7 @@ import {
 } from '../booking/booking.service'
 
 export interface WaitlistCreateData {
+  storeId?: number
   sessionId: number
   customerName: string
   customerPhone: string
@@ -22,33 +23,39 @@ export interface WaitlistConfirmResult {
 }
 
 export const createWaitlist = async (data: WaitlistCreateData) => {
+  const { storeId, sessionId, customerName, customerPhone, playerCount, remark } = data
+
   const session = await prisma.session.findUnique({
-    where: { id: data.sessionId },
-    include: { script: true, store: { select: { id: true, name: true } } },
+    where: { id: sessionId },
+    include: { script: true, store: true },
   })
 
   if (!session) {
     throw new AppError('场次不存在', 404)
   }
 
+  if (storeId !== undefined && session.storeId !== storeId) {
+    throw new AppError('场次不属于该门店', 400)
+  }
+
   if (session.status === 'CANCELLED') {
     throw new AppError('场次已取消，无法候补', 400)
   }
 
-  if (session.currentPlayers + data.playerCount <= session.maxPlayers) {
+  if (session.currentPlayers + playerCount <= session.maxPlayers) {
     throw new AppError('场次仍有余位，请直接预约', 400)
   }
 
   const customer = await prisma.$transaction(async (tx) => {
-    return await getOrCreateCustomer(tx, data.customerName, data.customerPhone)
+    return await getOrCreateCustomer(tx, customerName, customerPhone)
   })
 
   const waitlist = await prisma.waitlist.create({
     data: {
-      sessionId: data.sessionId,
+      sessionId,
       customerId: customer.id,
-      playerCount: data.playerCount,
-      remark: data.remark,
+      playerCount,
+      remark,
     },
     include: {
       session: {
@@ -69,7 +76,8 @@ const confirmWaitlistToBookingInternal = async (
   tx: Prisma.TransactionClient,
   waitlistId: number,
   status: BookingStatus = BookingStatus.PENDING,
-  remark?: string
+  remark?: string,
+  storeId?: number
 ): Promise<WaitlistConfirmResult> => {
   const waitlist = await tx.waitlist.findUnique({
     where: { id: waitlistId },
@@ -84,6 +92,10 @@ const confirmWaitlistToBookingInternal = async (
 
   if (!waitlist) {
     throw new AppError('候补记录不存在', 404)
+  }
+
+  if (storeId !== undefined && waitlist.session.storeId !== storeId) {
+    throw new AppError('候补不属于该门店', 404)
   }
 
   if (waitlist.status !== WaitlistStatus.PENDING) {
@@ -139,10 +151,11 @@ const confirmWaitlistToBookingInternal = async (
 export const confirmWaitlistToBooking = async (
   waitlistId: number,
   status: BookingStatus = BookingStatus.PENDING,
-  remark?: string
+  remark?: string,
+  storeId?: number
 ): Promise<WaitlistConfirmResult> => {
   return await prisma.$transaction(async (tx) => {
-    return await confirmWaitlistToBookingInternal(tx, waitlistId, status, remark)
+    return await confirmWaitlistToBookingInternal(tx, waitlistId, status, remark, storeId)
   })
 }
 
@@ -209,7 +222,8 @@ export const updateWaitlist = async (
     playerCount?: number
     status?: WaitlistStatus
     remark?: string
-  }
+  },
+  storeId?: number
 ) => {
   const existing = await prisma.waitlist.findUnique({
     where: { id },
@@ -224,6 +238,10 @@ export const updateWaitlist = async (
 
   if (!existing) {
     throw new AppError('候补记录不存在', 404)
+  }
+
+  if (storeId !== undefined && existing.session.storeId !== storeId) {
+    throw new AppError('候补不属于该门店', 404)
   }
 
   if (data.playerCount !== undefined && data.playerCount !== existing.playerCount) {
@@ -250,7 +268,7 @@ export const updateWaitlist = async (
   return waitlist
 }
 
-export const getWaitlistById = async (id: number) => {
+export const getWaitlistById = async (id: number, storeId?: number) => {
   const waitlist = await prisma.waitlist.findUnique({
     where: { id },
     include: {
@@ -267,6 +285,10 @@ export const getWaitlistById = async (id: number) => {
 
   if (!waitlist) {
     throw new AppError('候补记录不存在', 404)
+  }
+
+  if (storeId !== undefined && waitlist.session.storeId !== storeId) {
+    throw new AppError('候补不属于该门店', 404)
   }
 
   return waitlist
@@ -318,10 +340,16 @@ export const getWaitlistList = async (
   return { waitlists, total }
 }
 
-export const deleteWaitlist = async (id: number) => {
-  const existing = await prisma.waitlist.findUnique({ where: { id } })
+export const deleteWaitlist = async (id: number, storeId?: number) => {
+  const existing = await prisma.waitlist.findUnique({
+    where: { id },
+    include: { session: { include: { store: true } } },
+  })
   if (!existing) {
     throw new AppError('候补记录不存在', 404)
+  }
+  if (storeId !== undefined && existing.session.storeId !== storeId) {
+    throw new AppError('候补不属于该门店', 404)
   }
   await prisma.waitlist.delete({ where: { id } })
 }

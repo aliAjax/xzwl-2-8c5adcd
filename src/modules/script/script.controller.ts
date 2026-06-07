@@ -8,6 +8,7 @@ import {
   scriptUpdateSchema,
   paginationSchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 type CreateScriptRequest = TypedRequest<
@@ -32,7 +33,7 @@ type GetScriptListRequest = TypedRequest<
 
 type GetScriptByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
@@ -118,6 +119,7 @@ export const getScriptList = async (req: GetScriptListRequest, res: Response, ne
 export const getScriptById = async (req: GetScriptByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
 
     const script = await prisma.script.findUnique({
       where: { id },
@@ -142,6 +144,10 @@ export const getScriptById = async (req: GetScriptByIdRequest, res: Response, ne
 
     if (!script) {
       throw new AppError('剧本不存在', 404)
+    }
+
+    if (storeId !== undefined && script.storeId !== storeId) {
+      throw new AppError('剧本不属于该门店', 404)
     }
 
     res.sendSuccess(script)

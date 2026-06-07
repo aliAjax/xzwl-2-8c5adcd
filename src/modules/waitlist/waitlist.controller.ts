@@ -8,6 +8,7 @@ import {
   waitlistConfirmSchema,
   idParamSchema,
   sessionIdParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 import {
   createWaitlist,
@@ -39,7 +40,7 @@ type GetWaitlistListRequest = TypedRequest<
 
 type GetWaitlistByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
@@ -95,7 +96,8 @@ export const getWaitlistByIdHandler = async (
 ) => {
   try {
     const { id } = req.params
-    const waitlist = await getWaitlistById(id)
+    const { storeId } = req.query
+    const waitlist = await getWaitlistById(id, storeId)
     res.sendSuccess(waitlist)
   } catch (error) {
     next(error)
@@ -109,8 +111,9 @@ export const updateWaitlistHandler = async (
 ) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query as { storeId?: number }
     const { playerCount, status, remark } = req.body
-    const waitlist = await updateWaitlist(id, { playerCount, status, remark })
+    const waitlist = await updateWaitlist(id, { playerCount, status, remark }, storeId)
     res.sendSuccess(waitlist, '候补更新成功')
   } catch (error) {
     next(error)
@@ -124,7 +127,8 @@ export const deleteWaitlistHandler = async (
 ) => {
   try {
     const { id } = req.params
-    await deleteWaitlist(id)
+    const { storeId } = req.query
+    await deleteWaitlist(id, storeId)
     res.sendSuccess(null, '候补取消成功')
   } catch (error) {
     next(error)
@@ -138,8 +142,9 @@ export const confirmWaitlistHandler = async (
 ) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query as { storeId?: number }
     const { status, remark } = req.body
-    const result = await confirmWaitlistToBooking(id, status, remark)
+    const result = await confirmWaitlistToBooking(id, status, remark, storeId)
     if (result.success) {
       res.sendSuccess(result, '候补转正成功')
     } else {

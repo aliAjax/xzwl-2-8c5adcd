@@ -8,6 +8,7 @@ import {
   roomUpdateSchema,
   roomQuerySchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 import { SessionStatus } from '@prisma/client'
 
@@ -33,7 +34,7 @@ type GetRoomListRequest = TypedRequest<
 
 type GetRoomByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
@@ -114,6 +115,7 @@ export const getRoomList = async (req: GetRoomListRequest, res: Response, next: 
 export const getRoomById = async (req: GetRoomByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
 
     const room = await prisma.room.findUnique({
       where: { id },
@@ -132,6 +134,10 @@ export const getRoomById = async (req: GetRoomByIdRequest, res: Response, next: 
 
     if (!room) {
       throw new AppError('房间不存在', 404)
+    }
+
+    if (storeId !== undefined && room.storeId !== storeId) {
+      throw new AppError('房间不属于该门店', 404)
     }
 
     res.sendSuccess(room)
@@ -231,7 +237,7 @@ export const deleteRoom = async (req: GetRoomByIdRequest, res: Response, next: N
 export const getRoomSchedule = async (req: GetRoomByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
-    const { startDate, endDate } = req.query as { startDate?: Date; endDate?: Date }
+    const { startDate, endDate, storeId } = req.query as { startDate?: Date; endDate?: Date; storeId?: number }
 
     const room = await prisma.room.findUnique({
       where: { id },
@@ -241,9 +247,17 @@ export const getRoomSchedule = async (req: GetRoomByIdRequest, res: Response, ne
       throw new AppError('房间不存在', 404)
     }
 
+    if (storeId !== undefined && room.storeId !== storeId) {
+      throw new AppError('房间不属于该门店', 404)
+    }
+
     const where: Record<string, unknown> = {
       roomId: id,
       status: { notIn: [SessionStatus.CANCELLED] },
+    }
+
+    if (storeId !== undefined) {
+      where.storeId = storeId
     }
 
     if (startDate && endDate) {

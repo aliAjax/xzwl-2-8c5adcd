@@ -10,6 +10,7 @@ import {
   sessionQuerySchema,
   availableSessionQuerySchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 type CreateSessionRequest = TypedRequest<
@@ -34,7 +35,7 @@ type GetSessionListRequest = TypedRequest<
 
 type GetSessionByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
@@ -261,6 +262,7 @@ export const getSessionList = async (req: GetSessionListRequest, res: Response, 
 export const getSessionById = async (req: GetSessionByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
 
     const session = await prisma.session.findUnique({
       where: { id },
@@ -290,6 +292,10 @@ export const getSessionById = async (req: GetSessionByIdRequest, res: Response, 
 
     if (!session) {
       throw new AppError('场次不存在', 404)
+    }
+
+    if (storeId !== undefined && session.storeId !== storeId) {
+      throw new AppError('场次不属于该门店', 404)
     }
 
     res.sendSuccess(session)

@@ -9,6 +9,7 @@ import {
   bookingUpdateSchema,
   bookingQuerySchema,
   idParamSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 import {
   validatePlayerCount,
@@ -40,21 +41,25 @@ type GetBookingListRequest = TypedRequest<
 
 type GetBookingByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
 export const createBooking = async (req: CreateBookingRequest, res: Response, next: NextFunction) => {
   try {
-    const { sessionId, customerName, customerPhone, playerCount, status, remark, useMembership, membershipAmount, operator } = req.body
+    const { storeId, sessionId, customerName, customerPhone, playerCount, status, remark, useMembership, membershipAmount, operator } = req.body
 
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
-      include: { script: true, store: { select: { id: true, name: true } } },
+      include: { script: true, store: true },
     })
 
     if (!session) {
       throw new AppError('场次不存在', 404)
+    }
+
+    if (storeId !== undefined && session.storeId !== storeId) {
+      throw new AppError('场次不属于该门店', 400)
     }
 
     if (session.status === 'CANCELLED') {
@@ -163,6 +168,7 @@ export const getBookingList = async (req: GetBookingListRequest, res: Response, 
 export const getBookingById = async (req: GetBookingByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
 
     const booking = await prisma.booking.findUnique({
       where: { id },
@@ -180,6 +186,10 @@ export const getBookingById = async (req: GetBookingByIdRequest, res: Response, 
 
     if (!booking) {
       throw new AppError('预约记录不存在', 404)
+    }
+
+    if (storeId !== undefined && booking.session.storeId !== storeId) {
+      throw new AppError('预约不属于该门店', 404)
     }
 
     res.sendSuccess(booking)
@@ -319,6 +329,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
 export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
 
     const existingBooking = await prisma.booking.findUnique({
       where: { id },
@@ -333,6 +344,10 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
 
     if (!existingBooking) {
       throw new AppError('预约记录不存在', 404)
+    }
+
+    if (storeId !== undefined && existingBooking.session.storeId !== storeId) {
+      throw new AppError('预约不属于该门店', 404)
     }
 
     await prisma.$transaction(async (tx) => {

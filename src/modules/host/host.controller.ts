@@ -10,6 +10,7 @@ import {
   paginationSchema,
   idParamSchema,
   hostRecommendSchema,
+  detailQuerySchema,
 } from '../../common/schemas'
 
 type CreateHostRequest = TypedRequest<
@@ -34,7 +35,7 @@ type GetHostListRequest = TypedRequest<
 
 type GetHostByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
-  Record<string, never>,
+  InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
@@ -350,6 +351,7 @@ export const getHostList = async (req: GetHostListRequest, res: Response, next: 
 export const getHostById = async (req: GetHostByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeId } = req.query
 
     const host = await prisma.host.findUnique({
       where: { id },
@@ -379,6 +381,13 @@ export const getHostById = async (req: GetHostByIdRequest, res: Response, next: 
 
     if (!host) {
       throw new AppError('主持人不存在', 404)
+    }
+
+    if (storeId !== undefined) {
+      const isAssignedToStore = host.stores.some(s => s.storeId === storeId && s.isActive)
+      if (!isAssignedToStore) {
+        throw new AppError('主持人未分配到该门店', 404)
+      }
     }
 
     res.sendSuccess(host)

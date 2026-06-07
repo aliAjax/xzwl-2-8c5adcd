@@ -5,6 +5,10 @@ export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 })
 
+export const detailQuerySchema = z.object({
+  storeId: z.coerce.number().int().positive().optional(),
+})
+
 export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
@@ -151,6 +155,7 @@ export const availableSessionQuerySchema = z.object({
 })
 
 export const bookingSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional(),
   sessionId: z.number().int().positive(),
   customerName: z.string().min(1).max(50),
   customerPhone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }),
@@ -240,6 +245,7 @@ export const importBatchSchema = z.array(importItemSchema).min(1, { message: '�
 export const importConfirmSchema = importBatchSchema
 
 export const waitlistSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional(),
   sessionId: z.number().int().positive(),
   customerName: z.string().min(1).max(50),
   customerPhone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }),
