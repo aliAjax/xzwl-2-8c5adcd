@@ -215,6 +215,7 @@ export const getTransactionList = async (
   query: {
     page: number
     pageSize: number
+    storeId?: number
     customerId?: number
     type?: MembershipTransactionType
     status?: MembershipTransactionStatus
@@ -222,11 +223,16 @@ export const getTransactionList = async (
     endDate?: Date
   }
 ) => {
-  const { page, pageSize, customerId, type, status, startDate, endDate } = query
+  const { page, pageSize, storeId, customerId, type, status, startDate, endDate } = query
 
   const where: any = {}
   if (customerId) {
     where.account = { customerId }
+  }
+  if (storeId) {
+    where.relatedBooking = {
+      session: { storeId }
+    }
   }
   if (type) where.type = type
   if (status) where.status = status
@@ -254,6 +260,7 @@ export const getTransactionList = async (
                 id: true,
                 startTime: true,
                 script: { select: { id: true, name: true } },
+                store: { select: { id: true, name: true } },
               },
             },
           },

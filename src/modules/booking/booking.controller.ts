@@ -50,7 +50,7 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
 
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
-      include: { script: true },
+      include: { script: true, store: { select: { id: true, name: true } } },
     })
 
     if (!session) {
@@ -105,12 +105,13 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
 
 export const getBookingList = async (req: GetBookingListRequest, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, sessionId, customerId, status, keyword } = req.query
+    const { page, pageSize, sessionId, customerId, status, keyword, storeId } = req.query
 
     const where: Record<string, unknown> = {}
     if (sessionId) where.sessionId = sessionId
     if (customerId) where.customerId = customerId
     if (status) where.status = status
+    if (storeId) where.session = { storeId }
     if (keyword) {
       where.OR = [
         {
@@ -125,7 +126,9 @@ export const getBookingList = async (req: GetBookingListRequest, res: Response, 
         },
         {
           session: {
-            room: { contains: keyword },
+            room: {
+              name: { contains: keyword },
+            },
           },
         },
       ]
@@ -139,6 +142,7 @@ export const getBookingList = async (req: GetBookingListRequest, res: Response, 
             include: {
               script: { select: { id: true, name: true } },
               host: { select: { id: true, name: true } },
+              store: { select: { id: true, name: true } },
             },
           },
           customer: { select: { id: true, name: true, phone: true } },
@@ -167,6 +171,7 @@ export const getBookingById = async (req: GetBookingByIdRequest, res: Response, 
           include: {
             script: true,
             host: { select: { id: true, name: true, phone: true } },
+            store: { select: { id: true, name: true } },
           },
         },
         customer: true,
@@ -190,7 +195,14 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
 
     const existingBooking = await prisma.booking.findUnique({
       where: { id },
-      include: { session: { include: { script: true } } },
+      include: {
+        session: {
+          include: {
+            script: true,
+            store: true,
+          },
+        },
+      },
     })
 
     if (!existingBooking) {
@@ -255,6 +267,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
             include: {
               script: { select: { id: true, name: true } },
               host: { select: { id: true, name: true } },
+              store: { select: { id: true, name: true } },
             },
           },
           customer: { select: { id: true, name: true, phone: true } },
@@ -309,6 +322,13 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
 
     const existingBooking = await prisma.booking.findUnique({
       where: { id },
+      include: {
+        session: {
+          include: {
+            store: true,
+          },
+        },
+      },
     })
 
     if (!existingBooking) {

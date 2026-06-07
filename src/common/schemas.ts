@@ -9,9 +9,28 @@ export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
   keyword: z.string().optional(),
+  storeId: z.coerce.number().int().positive().optional(),
+})
+
+export const storeSchema = z.object({
+  name: z.string().min(1).max(100),
+  address: z.string().optional(),
+  phone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }).optional(),
+  isActive: z.boolean().optional().default(true),
+})
+
+export const storeUpdateSchema = storeSchema.partial().refine(
+  data => Object.keys(data).length > 0,
+  { message: '至少需要提供一个更新字段' }
+)
+
+export const hostAssignStoreSchema = z.object({
+  hostId: z.number().int().positive(),
+  storeIds: z.array(z.number().int().positive()).min(1),
 })
 
 export const scriptSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional().default(1),
   name: z.string().min(1).max(100),
   description: z.string().optional(),
   minPlayers: z.number().int().positive(),
@@ -28,6 +47,7 @@ export const scriptUpdateSchema = scriptSchema.partial().refine(
 )
 
 export const hostSchema = z.object({
+  storeIds: z.array(z.coerce.number().int().positive()).optional(),
   name: z.string().min(1).max(50),
   phone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }),
   avatar: z.string().url().optional(),
@@ -40,6 +60,7 @@ export const hostUpdateSchema = hostSchema.partial().refine(
 )
 
 export const roomSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional().default(1),
   name: z.string().min(1).max(50),
   capacity: z.number().int().positive(),
   isActive: z.boolean().optional().default(true),
@@ -56,6 +77,7 @@ export const roomQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
   isActive: z.coerce.boolean().optional(),
   keyword: z.string().optional(),
+  storeId: z.coerce.number().int().positive().optional(),
 })
 
 export const proficiencySchema = z.object({
@@ -69,6 +91,7 @@ export const proficiencyUpdateSchema = z.object({
 })
 
 export const sessionSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional().default(1),
   scriptId: z.number().int().positive(),
   hostId: z.number().int().positive(),
   roomId: z.number().int().positive(),
@@ -106,6 +129,7 @@ export const sessionUpdateSchema = z.object({
 export const sessionQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
   scriptId: z.coerce.number().int().positive().optional(),
   hostId: z.coerce.number().int().positive().optional(),
   roomId: z.coerce.number().int().positive().optional(),
@@ -117,6 +141,7 @@ export const sessionQuerySchema = z.object({
 export const availableSessionQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
   scriptId: z.coerce.number().int().positive().optional(),
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),
@@ -149,6 +174,7 @@ export const bookingUpdateSchema = z.object({
 export const bookingQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
   sessionId: z.coerce.number().int().positive().optional(),
   customerId: z.coerce.number().int().positive().optional(),
   status: z.nativeEnum(BookingStatus).optional(),
@@ -157,12 +183,14 @@ export const bookingQuerySchema = z.object({
 
 export const statsQuerySchema = z.object({
   days: z.coerce.number().int().positive().max(365).optional().default(30),
+  storeId: z.coerce.number().int().positive().optional(),
   scriptId: z.coerce.number().int().positive().optional(),
 })
 
 export const customerQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
   keyword: z.string().optional(),
 })
 
@@ -231,6 +259,7 @@ export const waitlistUpdateSchema = z.object({
 export const waitlistQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
   sessionId: z.coerce.number().int().positive().optional(),
   customerId: z.coerce.number().int().positive().optional(),
   status: z.nativeEnum(WaitlistStatus).optional(),
@@ -247,6 +276,7 @@ export const sessionIdParamSchema = z.object({
 })
 
 export const hostRecommendSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional().default(1),
   scriptId: z.number().int().positive(),
   startTime: z.coerce.date(),
   endTime: z.coerce.date(),
@@ -288,6 +318,7 @@ export const membershipRefundSchema = z.object({
 export const membershipTransactionQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
   customerId: z.coerce.number().int().positive().optional(),
   type: z.nativeEnum(MembershipTransactionType).optional(),
   status: z.nativeEnum(MembershipTransactionStatus).optional(),

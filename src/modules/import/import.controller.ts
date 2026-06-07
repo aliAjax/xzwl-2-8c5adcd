@@ -12,6 +12,8 @@ type ParsedImportItem = {
   item: InferSchemaType<typeof importItemSchema>
 }
 
+const DEFAULT_STORE_ID = 1
+
 const fieldLabels: Record<string, string> = {
   name: '名称',
   description: '描述',
@@ -28,6 +30,8 @@ const fieldLabels: Record<string, string> = {
   scriptId: '剧本ID',
   scriptName: '剧本名称',
   level: '熟练度等级',
+  storeId: '门店ID',
+  storeIds: '门店IDs',
 }
 
 const formatFieldError = (field: string, message: string, value?: unknown): string => {
@@ -171,7 +175,7 @@ const validateImportData = async (
   }
 
   const batchPhoneMap = new Map<string, number[]>()
-  const batchScriptNameMap = new Map<string, number[]>()
+  const batchScriptStoreNameMap = new Map<string, number[]>()
   const batchProficiencyKeyMap = new Map<string, number[]>()
   const zodErrorRows = new Set<number>()
 
@@ -207,50 +211,74 @@ const validateImportData = async (
       }
     } else if (item.type === 'script') {
       const name = (item.data as any).name
+      const storeId = (item.data as any).storeId ?? DEFAULT_STORE_ID
+      const storeNameKey = `${storeId}-${name}`
       if (name) {
-        if (!batchScriptNameMap.has(name)) {
-          batchScriptNameMap.set(name, [])
+        if (!batchScriptStoreNameMap.has(storeNameKey)) {
+          batchScriptStoreNameMap.set(storeNameKey, [])
         }
-        batchScriptNameMap.get(name)!.push(row)
+        batchScriptStoreNameMap.get(storeNameKey)!.push(row)
       }
     }
   })
 
   const phoneList = Array.from(batchPhoneMap.keys())
-  const scriptNameList = Array.from(batchScriptNameMap.keys())
+  const scriptStoreNameList = Array.from(batchScriptStoreNameMap.keys())
 
+  const storeIdsToCheck = new Set<number>()
   const hostIdsToCheck = new Set<number>()
   const scriptIdsToCheck = new Set<number>()
   const proficiencyHostPhonesToCheck = new Set<string>()
   const proficiencyScriptNamesToCheck = new Set<string>()
 
   items.forEach(({ item }) => {
-    if (item.type !== 'proficiency') return
-    const data = item.data as any
-    if (data.hostId) hostIdsToCheck.add(data.hostId)
-    if (data.scriptId) scriptIdsToCheck.add(data.scriptId)
-    if (data.hostPhone) proficiencyHostPhonesToCheck.add(data.hostPhone)
-    if (data.scriptName) proficiencyScriptNamesToCheck.add(data.scriptName)
+    if (item.type === 'script') {
+      const data = item.data as any
+      if (data.storeId) storeIdsToCheck.add(data.storeId)
+    } else if (item.type === 'host') {
+      const data = item.data as any
+      if (data.storeIds) data.storeIds.forEach((id: number) => storeIdsToCheck.add(id))
+    } else if (item.type === 'proficiency') {
+      const data = item.data as any
+      if (data.hostId) hostIdsToCheck.add(data.hostId)
+      if (data.scriptId) scriptIdsToCheck.add(data.scriptId)
+      if (data.hostPhone) proficiencyHostPhonesToCheck.add(data.hostPhone)
+      if (data.scriptName) proficiencyScriptNamesToCheck.add(data.scriptName)
+    }
   })
 
   const [
     existingHostsByPhone,
-    existingScriptsByName,
+    existingScriptsByStoreName,
+    existingStores,
     existingHostsById,
     existingScriptsById,
     proficiencyHostsByPhone,
     proficiencyScriptsByName,
   ] = await Promise.all([
     phoneList.length > 0 ? prisma.host.findMany({ where: { phone: { in: phoneList } }, select: { phone: true } }) : Promise.resolve([]),
-    scriptNameList.length > 0 ? prisma.script.findMany({ where: { name: { in: scriptNameList } }, select: { name: true } }) : Promise.resolve([]),
+    scriptStoreNameList.length > 0 ? prisma.script.findMany({
+      where: {
+        OR: scriptStoreNameList.map(key => {
+          const [storeId, ...nameParts] = key.split('-')
+          return {
+            storeId: Number(storeId),
+            name: nameParts.join('-')
+          }
+        })
+      },
+      select: { storeId: true, name: true }
+    }) : Promise.resolve([]),
+    storeIdsToCheck.size > 0 ? prisma.store.findMany({ where: { id: { in: Array.from(storeIdsToCheck) } }, select: { id: true } }) : Promise.resolve([]),
     hostIdsToCheck.size > 0 ? prisma.host.findMany({ where: { id: { in: Array.from(hostIdsToCheck) } }, select: { id: true } }) : Promise.resolve([]),
     scriptIdsToCheck.size > 0 ? prisma.script.findMany({ where: { id: { in: Array.from(scriptIdsToCheck) } }, select: { id: true } }) : Promise.resolve([]),
     proficiencyHostPhonesToCheck.size > 0 ? prisma.host.findMany({ where: { phone: { in: Array.from(proficiencyHostPhonesToCheck) } }, select: { id: true, phone: true } }) : Promise.resolve([]),
-    proficiencyScriptNamesToCheck.size > 0 ? prisma.script.findMany({ where: { name: { in: Array.from(proficiencyScriptNamesToCheck) } }, select: { id: true, name: true } }) : Promise.resolve([]),
+    proficiencyScriptNamesToCheck.size > 0 ? prisma.script.findMany({ where: { name: { in: Array.from(proficiencyScriptNamesToCheck) } }, select: { id: true, name: true, storeId: true } }) : Promise.resolve([]),
   ])
 
   const existingPhoneSet = new Set(existingHostsByPhone.map(h => h.phone))
-  const existingScriptNameSet = new Set(existingScriptsByName.map(s => s.name))
+  const existingScriptStoreNameSet = new Set(existingScriptsByStoreName.map(s => `${s.storeId}-${s.name}`))
+  const existingStoreIdSet = new Set(existingStores.map(s => s.id))
   const existingHostIdSet = new Set(existingHostsById.map(h => h.id))
   const existingScriptIdSet = new Set(existingScriptsById.map(s => s.id))
   const proficiencyHostPhoneToId = new Map(proficiencyHostsByPhone.map(h => [h.phone, h.id]))
@@ -275,20 +303,39 @@ const validateImportData = async (
     }
   })
 
-  batchScriptNameMap.forEach((rows, name) => {
+  batchScriptStoreNameMap.forEach((rows, storeNameKey) => {
+    const [storeId, ...nameParts] = storeNameKey.split('-')
+    const name = nameParts.join('-')
     if (rows.length > 1) {
       rows.forEach(row => {
         if (!zodErrorRows.has(row)) {
-          const message = `批次内存在重复剧本名: ${name}`
+          const message = `批次内门店 ${storeId} 存在重复剧本名: ${name}`
           addErrorWithField(result, row, 'script', message, 'name', name)
         }
       })
     }
-    if (existingScriptNameSet.has(name)) {
+    if (existingScriptStoreNameSet.has(storeNameKey)) {
       rows.forEach(row => {
         if (!zodErrorRows.has(row)) {
-          const message = `剧本名已存在: ${name}`
+          const message = `门店 ${storeId} 剧本名已存在: ${name}`
           addErrorWithField(result, row, 'script', message, 'name', name)
+        }
+      })
+    }
+  })
+
+  items.forEach(({ row, item }) => {
+    if (zodErrorRows.has(row)) return
+    if (item.type === 'script') {
+      const storeId = (item.data as any).storeId ?? DEFAULT_STORE_ID
+      if (!existingStoreIdSet.has(storeId)) {
+        addErrorWithField(result, row, 'script', `门店不存在: ${storeId}`, 'storeId', storeId)
+      }
+    } else if (item.type === 'host') {
+      const storeIds = (item.data as any).storeIds ?? [DEFAULT_STORE_ID]
+      storeIds.forEach((storeId: number) => {
+        if (!existingStoreIdSet.has(storeId)) {
+          addErrorWithField(result, row, 'host', `门店不存在: ${storeId}`, 'storeIds', storeId)
         }
       })
     }
@@ -298,7 +345,7 @@ const validateImportData = async (
   result.errors.forEach(e => validRows.delete(e.row))
 
   const batchHostPhoneToIndex = new Map<string, number>()
-  const batchScriptNameToIndex = new Map<string, number>()
+  const batchScriptStoreNameToIndex = new Map<string, number>()
 
   items.forEach(({ row, item }) => {
     if (!validRows.has(row)) return
@@ -307,7 +354,9 @@ const validateImportData = async (
       batchHostPhoneToIndex.set((item.data as any).phone, row)
       result.hosts.push({ row, data: item.data })
     } else if (item.type === 'script') {
-      batchScriptNameToIndex.set((item.data as any).name, row)
+      const storeId = (item.data as any).storeId ?? DEFAULT_STORE_ID
+      const storeNameKey = `${storeId}-${(item.data as any).name}`
+      batchScriptStoreNameToIndex.set(storeNameKey, row)
       result.scripts.push({ row, data: item.data })
     }
   })
@@ -353,17 +402,26 @@ const validateImportData = async (
     } else if (data.scriptName) {
       if (proficiencyScriptNameToId.has(data.scriptName)) {
         resolvedScriptId = proficiencyScriptNameToId.get(data.scriptName)
-      } else if (batchScriptNameToIndex.has(data.scriptName)) {
-        const scriptRow = batchScriptNameToIndex.get(data.scriptName)!
-        if (!validRows.has(scriptRow)) {
-          const message = `引用的剧本名 ${data.scriptName} 在批次内验证失败`
-          addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
-        } else {
-          resolvedScriptId = -scriptRow
-        }
       } else {
-        const message = `剧本不存在: ${data.scriptName}`
-        addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
+        const matchedScript = proficiencyScriptsByName.find(s => s.name === data.scriptName)
+        if (matchedScript) {
+          resolvedScriptId = matchedScript.id
+        } else {
+          const storeId = data.storeId ?? DEFAULT_STORE_ID
+          const storeNameKey = `${storeId}-${data.scriptName}`
+          if (batchScriptStoreNameToIndex.has(storeNameKey)) {
+            const scriptRow = batchScriptStoreNameToIndex.get(storeNameKey)!
+            if (!validRows.has(scriptRow)) {
+              const message = `引用的剧本名 ${data.scriptName} 在批次内验证失败`
+              addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
+            } else {
+              resolvedScriptId = -scriptRow
+            }
+          } else {
+            const message = `剧本不存在: ${data.scriptName}`
+            addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
+          }
+        }
       }
     }
 
@@ -476,13 +534,26 @@ export const confirmImport = async (req: ImportConfirmRequest, res: Response, ne
 
     await prisma.$transaction(async (tx) => {
       for (const scriptItem of validated.scripts) {
-        const script = await tx.script.create({ data: scriptItem.data })
+        const { storeIds, ...scriptData } = scriptItem.data as any
+        const effectiveStoreId = scriptData.storeId ?? DEFAULT_STORE_ID
+        const script = await tx.script.create({ data: { ...scriptData, storeId: effectiveStoreId } })
         scriptIds.push(script.id)
         indexToScriptId.set(scriptItem.row, script.id)
       }
 
       for (const hostItem of validated.hosts) {
-        const host = await tx.host.create({ data: hostItem.data })
+        const { storeIds, ...hostData } = hostItem.data as any
+        const effectiveStoreIds = storeIds ?? [DEFAULT_STORE_ID]
+        const host = await tx.host.create({
+          data: {
+            ...hostData,
+            stores: {
+              create: effectiveStoreIds.map((storeId: number) => ({
+                store: { connect: { id: storeId } }
+              }))
+            }
+          }
+        })
         hostIds.push(host.id)
         indexToHostId.set(hostItem.row, host.id)
       }

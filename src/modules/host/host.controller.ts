@@ -18,6 +18,7 @@ type CreateHostRequest = TypedRequest<
   InferSchemaType<typeof hostSchema>
 >
 
+
 type UpdateHostRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
   Record<string, never>,
@@ -30,17 +31,22 @@ type GetHostListRequest = TypedRequest<
   Record<string, never>
 >
 
+
 type GetHostByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
   Record<string, never>,
   Record<string, never>
 >
 
+
 type RecommendHostsRequest = TypedRequest<
   Record<string, never>,
   Record<string, never>,
   InferSchemaType<typeof hostRecommendSchema>
 >
+
+
+const DEFAULT_STORE_ID = 1
 
 const proficiencyWeight: Record<ProficiencyLevel, number> = {
   [ProficiencyLevel.EXPERT]: 4,
@@ -51,10 +57,12 @@ const proficiencyWeight: Record<ProficiencyLevel, number> = {
 
 const getConflictingHostIds = async (
   startTime: Date,
-  endTime: Date
+  endTime: Date,
+  excludeSessionId?: number
 ): Promise<Set<number>> => {
   const conflictingSessions = await prisma.session.findMany({
     where: {
+      id: excludeSessionId ? { not: excludeSessionId } : undefined,
       status: {
         notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED],
       },
@@ -119,11 +127,12 @@ const getLastHostTime = async (hostIds: number[]): Promise<Map<number, Date | nu
 
 export const recommendHosts = async (req: RecommendHostsRequest, res: Response, next: NextFunction) => {
   try {
-    const { scriptId, startTime, endTime, limit } = req.body
+    const { scriptId, startTime, endTime, limit, storeId } = req.body
+    const effectiveStoreId = storeId ?? DEFAULT_STORE_ID
 
     const script = await prisma.script.findUnique({
       where: { id: scriptId },
-      select: { id: true, name: true, isActive: true },
+      select: { id: true, name: true, isActive: true, storeId: true },
     })
 
     if (!script) {
@@ -132,6 +141,16 @@ export const recommendHosts = async (req: RecommendHostsRequest, res: Response, 
     if (!script.isActive) {
       throw new AppError('该剧本已被禁用', 400)
     }
+    if (script.storeId !== effectiveStoreId) {
+      throw new AppError('剧本不属于该门店', 400)
+    }
+
+    const store = await prisma.store.findUnique({
+      where: { id: effectiveStoreId },
+    })
+    if (!store) {
+      throw new AppError('门店不存在', 404)
+    }
 
     const conflictingHostIds = await getConflictingHostIds(startTime, endTime)
 
@@ -139,6 +158,12 @@ export const recommendHosts = async (req: RecommendHostsRequest, res: Response, 
       where: {
         isActive: true,
         id: { notIn: Array.from(conflictingHostIds) },
+        stores: {
+          some: {
+            storeId: effectiveStoreId,
+            isActive: true,
+          },
+        },
       },
       include: {
         proficiencies: {
@@ -230,10 +255,43 @@ export const recommendHosts = async (req: RecommendHostsRequest, res: Response, 
 
 export const createHost = async (req: CreateHostRequest, res: Response, next: NextFunction) => {
   try {
-    const host = await prisma.host.create({
-      data: req.body,
+    const { storeIds, ...hostData } = req.body
+    const effectiveStoreIds = storeIds ?? [DEFAULT_STORE_ID]
+
+    const stores = await prisma.store.findMany({
+      where: { id: { in: effectiveStoreIds } },
     })
-    res.sendSuccess(host, '主持人创建成功')
+    if (stores.length !== effectiveStoreIds.length) {
+      const existingIds = stores.map(s => s.id)
+      const missingIds = effectiveStoreIds.filter(id => !existingIds.includes(id))
+      throw new AppError(`门店不存在: ${missingIds.join(', ')}`, 404)
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const host = await tx.host.create({
+        data: hostData,
+      })
+
+      await tx.hostStore.createMany({
+        data: effectiveStoreIds.map(storeId => ({
+          hostId: host.id,
+          storeId,
+        })),
+      })
+
+      return tx.host.findUnique({
+        where: { id: host.id },
+        include: {
+          stores: {
+            include: {
+              store: { select: { id: true, name: true } },
+            },
+          },
+        },
+      })
+    })
+
+    res.sendSuccess(result, '主持人创建成功')
   } catch (error) {
     next(error)
   }
@@ -241,9 +299,17 @@ export const createHost = async (req: CreateHostRequest, res: Response, next: Ne
 
 export const getHostList = async (req: GetHostListRequest, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, keyword } = req.query
+    const { page, pageSize, keyword, storeId } = req.query
 
     const where: Record<string, unknown> = {}
+    if (storeId !== undefined) {
+      where.stores = {
+        some: {
+          storeId,
+          isActive: true,
+        },
+      }
+    }
     if (keyword) {
       where.OR = [
         { name: { contains: keyword } },
@@ -255,6 +321,11 @@ export const getHostList = async (req: GetHostListRequest, res: Response, next: 
       prisma.host.findMany({
         where,
         include: {
+          stores: {
+            include: {
+              store: { select: { id: true, name: true } },
+            },
+          },
           proficiencies: {
             include: {
               script: {
@@ -283,6 +354,11 @@ export const getHostById = async (req: GetHostByIdRequest, res: Response, next: 
     const host = await prisma.host.findUnique({
       where: { id },
       include: {
+        stores: {
+          include: {
+            store: { select: { id: true, name: true } },
+          },
+        },
         proficiencies: {
           include: {
             script: {
@@ -295,6 +371,7 @@ export const getHostById = async (req: GetHostByIdRequest, res: Response, next: 
           orderBy: { startTime: 'desc' },
           include: {
             script: { select: { id: true, name: true } },
+            store: { select: { id: true, name: true } },
           },
         },
       },
@@ -313,13 +390,69 @@ export const getHostById = async (req: GetHostByIdRequest, res: Response, next: 
 export const updateHost = async (req: UpdateHostRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+    const { storeIds, ...hostData } = req.body
 
-    const host = await prisma.host.update({
+    const existingHost = await prisma.host.findUnique({
       where: { id },
-      data: req.body,
     })
+    if (!existingHost) {
+      throw new AppError('主持人不存在', 404)
+    }
 
-    res.sendSuccess(host, '主持人更新成功')
+    let updatedHost
+    if (storeIds !== undefined) {
+      const stores = await prisma.store.findMany({
+        where: { id: { in: storeIds } },
+      })
+      if (stores.length !== storeIds.length) {
+        const existingIds = stores.map(s => s.id)
+        const missingIds = storeIds.filter(id => !existingIds.includes(id))
+        throw new AppError(`门店不存在: ${missingIds.join(', ')}`, 404)
+      }
+
+      updatedHost = await prisma.$transaction(async (tx) => {
+        const host = await tx.host.update({
+          where: { id },
+          data: hostData,
+        })
+
+        await tx.hostStore.deleteMany({
+          where: { hostId: id },
+        })
+
+        await tx.hostStore.createMany({
+          data: storeIds.map(storeId => ({
+            hostId: id,
+            storeId,
+          })),
+        })
+
+        return tx.host.findUnique({
+          where: { id: host.id },
+          include: {
+            stores: {
+              include: {
+                store: { select: { id: true, name: true } },
+              },
+            },
+          },
+        })
+      })
+    } else {
+      updatedHost = await prisma.host.update({
+        where: { id },
+        data: hostData,
+        include: {
+          stores: {
+            include: {
+              store: { select: { id: true, name: true } },
+            },
+          },
+        },
+      })
+    }
+
+    res.sendSuccess(updatedHost, '主持人更新成功')
   } catch (error) {
     next(error)
   }
@@ -328,6 +461,13 @@ export const updateHost = async (req: UpdateHostRequest, res: Response, next: Ne
 export const deleteHost = async (req: GetHostByIdRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
+
+    const existingHost = await prisma.host.findUnique({
+      where: { id },
+    })
+    if (!existingHost) {
+      throw new AppError('主持人不存在', 404)
+    }
 
     await prisma.host.delete({
       where: { id },
@@ -338,3 +478,5 @@ export const deleteHost = async (req: GetHostByIdRequest, res: Response, next: N
     next(error)
   }
 }
+
+export { getConflictingHostIds }

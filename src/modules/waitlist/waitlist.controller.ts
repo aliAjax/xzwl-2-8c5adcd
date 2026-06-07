@@ -74,12 +74,13 @@ export const getWaitlistListHandler = async (
   next: NextFunction
 ) => {
   try {
-    const { page, pageSize, sessionId, customerId, status, keyword } = req.query
+    const { page, pageSize, sessionId, customerId, status, keyword, storeId } = req.query
     const { waitlists, total } = await getWaitlistList(page, pageSize, {
       sessionId,
       customerId,
       status,
       keyword,
+      storeId,
     })
     res.sendSuccess(createPaginationResult(waitlists, total, page, pageSize))
   } catch (error) {

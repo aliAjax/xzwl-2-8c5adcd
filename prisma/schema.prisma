@@ -56,9 +56,40 @@ enum MembershipTransactionStatus {
   CANCELLED
 }
 
+model Store {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  address     String?
+  phone       String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  scripts     Script[]
+  rooms       Room[]
+  hosts       HostStore[]
+  sessions    Session[]
+
+  @@index([isActive])
+}
+
+model HostStore {
+  hostId    Int
+  storeId   Int
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  host      Host     @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([hostId, storeId])
+  @@index([storeId])
+  @@index([hostId])
+}
+
 model Script {
   id           Int               @id @default(autoincrement())
-  name         String            @unique
+  storeId      Int
+  name         String
   description  String?
   minPlayers   Int
   maxPlayers   Int
@@ -68,9 +99,12 @@ model Script {
   isActive     Boolean           @default(true)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+  store        Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
   sessions     Session[]
   proficiencies HostProficiency[]
 
+  @@unique([storeId, name])
+  @@index([storeId])
   @@index([isActive])
   @@index([difficulty])
 }
@@ -83,6 +117,7 @@ model Host {
   isActive      Boolean           @default(true)
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
+  stores        HostStore[]
   sessions      Session[]
   proficiencies HostProficiency[]
 
@@ -104,19 +139,24 @@ model HostProficiency {
 
 model Room {
   id         Int       @id @default(autoincrement())
-  name       String    @unique
+  storeId    Int
+  name       String
   capacity   Int
   isActive   Boolean   @default(true)
   remark     String?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+  store      Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
   sessions   Session[]
 
+  @@unique([storeId, name])
+  @@index([storeId])
   @@index([isActive])
 }
 
 model Session {
   id            Int            @id @default(autoincrement())
+  storeId       Int
   scriptId      Int
   hostId        Int
   roomId        Int
@@ -129,18 +169,20 @@ model Session {
   remark        String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
   script        Script         @relation(fields: [scriptId], references: [id], onDelete: Cascade)
   host          Host           @relation(fields: [hostId], references: [id], onDelete: Cascade)
   room          Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
   bookings      Booking[]
   waitlists     Waitlist[]
 
+  @@index([storeId])
   @@index([scriptId])
   @@index([hostId])
   @@index([roomId])
   @@index([startTime])
   @@index([status])
-  @@index([startTime, endTime])
+  @@index([storeId, startTime, endTime])
 }
 
 model Customer {

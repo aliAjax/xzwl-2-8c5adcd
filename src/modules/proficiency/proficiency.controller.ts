@@ -22,7 +22,7 @@ type UpdateProficiencyRequest = TypedRequest<
 
 type GetProficiencyListRequest = TypedRequest<
   Record<string, never>,
-  { hostId?: number; scriptId?: number; page?: number; pageSize?: number },
+  { hostId?: number; scriptId?: number; storeId?: number; page?: number; pageSize?: number },
   Record<string, never>
 >
 
@@ -38,7 +38,7 @@ export const createProficiency = async (req: CreateProficiencyRequest, res: Resp
 
     const [host, script] = await Promise.all([
       prisma.host.findUnique({ where: { id: hostId } }),
-      prisma.script.findUnique({ where: { id: scriptId } }),
+      prisma.script.findUnique({ where: { id: scriptId }, include: { store: { select: { id: true, name: true } } } }),
     ])
 
     if (!host) {
@@ -52,7 +52,7 @@ export const createProficiency = async (req: CreateProficiencyRequest, res: Resp
       data: req.body,
       include: {
         host: { select: { id: true, name: true } },
-        script: { select: { id: true, name: true } },
+        script: { select: { id: true, name: true, difficulty: true, store: { select: { id: true, name: true } } } },
       },
     })
 
@@ -64,7 +64,7 @@ export const createProficiency = async (req: CreateProficiencyRequest, res: Resp
 
 export const getProficiencyList = async (req: GetProficiencyListRequest, res: Response, next: NextFunction) => {
   try {
-    const { hostId, scriptId } = req.query
+    const { hostId, scriptId, storeId } = req.query
 
     const where: Record<string, unknown> = {}
     if (hostId) {
@@ -73,12 +73,15 @@ export const getProficiencyList = async (req: GetProficiencyListRequest, res: Re
     if (scriptId) {
       where.scriptId = Number(scriptId)
     }
+    if (storeId) {
+      where.script = { storeId: Number(storeId) }
+    }
 
     const proficiencies = await prisma.hostProficiency.findMany({
       where,
       include: {
         host: { select: { id: true, name: true, phone: true } },
-        script: { select: { id: true, name: true, difficulty: true } },
+        script: { select: { id: true, name: true, difficulty: true, store: { select: { id: true, name: true } } } },
       },
       orderBy: { level: 'desc' },
     })
@@ -97,7 +100,7 @@ export const getProficiencyById = async (req: GetProficiencyByIdRequest, res: Re
       where: { id },
       include: {
         host: { select: { id: true, name: true, phone: true } },
-        script: { select: { id: true, name: true, difficulty: true } },
+        script: { select: { id: true, name: true, difficulty: true, store: { select: { id: true, name: true } } } },
       },
     })
 
@@ -120,7 +123,7 @@ export const updateProficiency = async (req: UpdateProficiencyRequest, res: Resp
       data: req.body,
       include: {
         host: { select: { id: true, name: true } },
-        script: { select: { id: true, name: true } },
+        script: { select: { id: true, name: true, store: { select: { id: true, name: true } } } },
       },
     })
 

@@ -24,7 +24,7 @@ export interface WaitlistConfirmResult {
 export const createWaitlist = async (data: WaitlistCreateData) => {
   const session = await prisma.session.findUnique({
     where: { id: data.sessionId },
-    include: { script: true },
+    include: { script: true, store: { select: { id: true, name: true } } },
   })
 
   if (!session) {
@@ -55,6 +55,7 @@ export const createWaitlist = async (data: WaitlistCreateData) => {
         include: {
           script: { select: { id: true, name: true } },
           host: { select: { id: true, name: true } },
+          store: { select: { id: true, name: true } },
         },
       },
       customer: { select: { id: true, name: true, phone: true } },
@@ -72,7 +73,13 @@ const confirmWaitlistToBookingInternal = async (
 ): Promise<WaitlistConfirmResult> => {
   const waitlist = await tx.waitlist.findUnique({
     where: { id: waitlistId },
-    include: { session: true },
+    include: {
+      session: {
+        include: {
+          store: true,
+        },
+      },
+    },
   })
 
   if (!waitlist) {
@@ -206,7 +213,13 @@ export const updateWaitlist = async (
 ) => {
   const existing = await prisma.waitlist.findUnique({
     where: { id },
-    include: { session: true },
+    include: {
+      session: {
+        include: {
+          store: true,
+        },
+      },
+    },
   })
 
   if (!existing) {
@@ -227,6 +240,7 @@ export const updateWaitlist = async (
         include: {
           script: { select: { id: true, name: true } },
           host: { select: { id: true, name: true } },
+          store: { select: { id: true, name: true } },
         },
       },
       customer: { select: { id: true, name: true, phone: true } },
@@ -244,6 +258,7 @@ export const getWaitlistById = async (id: number) => {
         include: {
           script: true,
           host: { select: { id: true, name: true, phone: true } },
+          store: { select: { id: true, name: true } },
         },
       },
       customer: true,
@@ -265,12 +280,14 @@ export const getWaitlistList = async (
     customerId?: number
     status?: WaitlistStatus
     keyword?: string
+    storeId?: number
   }
 ) => {
   const where: Record<string, unknown> = {}
   if (filters?.sessionId) where.sessionId = filters.sessionId
   if (filters?.customerId) where.customerId = filters.customerId
   if (filters?.status) where.status = filters.status
+  if (filters?.storeId) where.session = { storeId: filters.storeId }
   if (filters?.keyword) {
     where.OR = [
       { customer: { name: { contains: filters.keyword } } },
@@ -286,6 +303,7 @@ export const getWaitlistList = async (
           include: {
             script: { select: { id: true, name: true } },
             host: { select: { id: true, name: true } },
+            store: { select: { id: true, name: true } },
           },
         },
         customer: { select: { id: true, name: true, phone: true } },

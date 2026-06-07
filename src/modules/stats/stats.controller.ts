@@ -25,7 +25,7 @@ type GetOverviewStatsRequest = TypedRequest<
 
 export const getScriptStats = async (req: GetScriptStatsRequest, res: Response, next: NextFunction) => {
   try {
-    const { days, scriptId } = req.query
+    const { days, scriptId, storeId } = req.query
 
     const startDate = dayjs().subtract(days, 'day').toDate()
     const endDate = dayjs().toDate()
@@ -42,6 +42,9 @@ export const getScriptStats = async (req: GetScriptStatsRequest, res: Response, 
 
     if (scriptId) {
       where.scriptId = scriptId
+    }
+    if (storeId) {
+      where.storeId = storeId
     }
 
     const stats = await prisma.session.groupBy({
@@ -72,6 +75,7 @@ export const getScriptStats = async (req: GetScriptStatsRequest, res: Response, 
         name: true,
         difficulty: true,
         coverImage: true,
+        store: { select: { id: true, name: true } },
       },
     })
 
@@ -89,6 +93,7 @@ export const getScriptStats = async (req: GetScriptStatsRequest, res: Response, 
         endDate,
         days,
       },
+      storeId,
       total: result.length,
       list: result,
     })
@@ -99,22 +104,28 @@ export const getScriptStats = async (req: GetScriptStatsRequest, res: Response, 
 
 export const getHostStats = async (req: GetHostStatsRequest, res: Response, next: NextFunction) => {
   try {
-    const { days } = req.query
+    const { days, storeId } = req.query
 
     const startDate = dayjs().subtract(days, 'day').toDate()
     const endDate = dayjs().toDate()
 
+    const where: Record<string, unknown> = {
+      startTime: {
+        gte: startDate,
+        lte: endDate,
+      },
+      status: {
+        notIn: [SessionStatus.CANCELLED],
+      },
+    }
+
+    if (storeId) {
+      where.storeId = storeId
+    }
+
     const stats = await prisma.session.groupBy({
       by: ['hostId'],
-      where: {
-        startTime: {
-          gte: startDate,
-          lte: endDate,
-        },
-        status: {
-          notIn: [SessionStatus.CANCELLED],
-        },
-      },
+      where,
       _count: {
         id: true,
       },
@@ -157,6 +168,7 @@ export const getHostStats = async (req: GetHostStatsRequest, res: Response, next
         endDate,
         days,
       },
+      storeId,
       total: result.length,
       list: result,
     })
@@ -167,10 +179,40 @@ export const getHostStats = async (req: GetHostStatsRequest, res: Response, next
 
 export const getOverviewStats = async (req: GetOverviewStatsRequest, res: Response, next: NextFunction) => {
   try {
-    const { days } = req.query
+    const { days, storeId } = req.query
 
     const startDate = dayjs().subtract(days, 'day').toDate()
     const endDate = dayjs().toDate()
+
+    const scriptWhere: Record<string, unknown> = { isActive: true }
+    const hostWhere: Record<string, unknown> = { isActive: true }
+    const sessionWhere: Record<string, unknown> = {}
+    const bookingWhere: Record<string, unknown> = {}
+    const periodSessionWhere: Record<string, unknown> = {
+      startTime: { gte: startDate, lte: endDate },
+      status: { notIn: [SessionStatus.CANCELLED] },
+    }
+    const periodBookingWhere: Record<string, unknown> = {
+      createdAt: { gte: startDate, lte: endDate },
+    }
+    const upcomingWhere: Record<string, unknown> = {
+      startTime: { gte: dayjs().toDate() },
+      status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
+    }
+    const recentBookingWhere: Record<string, unknown> = {}
+
+    if (storeId) {
+      scriptWhere.storeId = storeId
+      sessionWhere.storeId = storeId
+      periodSessionWhere.storeId = storeId
+      upcomingWhere.storeId = storeId
+      hostWhere.stores = {
+        some: { storeId }
+      }
+      bookingWhere.session = { storeId }
+      periodBookingWhere.session = { storeId }
+      recentBookingWhere.session = { storeId }
+    }
 
     const [
       totalScripts,
@@ -180,47 +222,57 @@ export const getOverviewStats = async (req: GetOverviewStatsRequest, res: Respon
       sessionsInPeriod,
       bookingsInPeriod,
     ] = await Promise.all([
-      prisma.script.count({ where: { isActive: true } }),
-      prisma.host.count({ where: { isActive: true } }),
-      prisma.session.count(),
-      prisma.booking.count(),
+      prisma.script.count({ where: scriptWhere }),
+      prisma.host.count({ where: hostWhere }),
+      prisma.session.count({ where: sessionWhere }),
+      prisma.booking.count({ where: bookingWhere }),
       prisma.session.count({
-        where: {
-          startTime: { gte: startDate, lte: endDate },
-          status: { notIn: [SessionStatus.CANCELLED] },
-        },
+        where: periodSessionWhere,
       }),
       prisma.booking.count({
-        where: {
-          createdAt: { gte: startDate, lte: endDate },
-        },
+        where: periodBookingWhere,
       }),
     ])
 
     const upcomingSessions = await prisma.session.findMany({
-      where: {
-        startTime: { gte: dayjs().toDate() },
-        status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
-      },
+      where: upcomingWhere,
       include: {
         script: { select: { id: true, name: true } },
         host: { select: { id: true, name: true } },
+        store: { select: { id: true, name: true } },
       },
       orderBy: { startTime: 'asc' },
       take: 10,
     })
 
     const recentBookings = await prisma.booking.findMany({
+      where: recentBookingWhere,
       include: {
         session: {
           include: {
             script: { select: { id: true, name: true } },
+            store: { select: { id: true, name: true } },
           },
         },
         customer: { select: { id: true, name: true, phone: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 10,
+    })
+
+    const storeBreakdown = storeId ? undefined : await prisma.store.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            scripts: true,
+            rooms: true,
+          },
+        },
+      },
+      orderBy: { id: 'asc' },
     })
 
     res.sendSuccess({
@@ -237,6 +289,8 @@ export const getOverviewStats = async (req: GetOverviewStatsRequest, res: Respon
         endDate,
         days,
       },
+      storeId,
+      storeBreakdown,
       upcomingSessions,
       recentBookings,
     })

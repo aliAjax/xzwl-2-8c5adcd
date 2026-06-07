@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import storeRoutes from '../modules/store/store.routes'
 import scriptRoutes from '../modules/script/script.routes'
 import hostRoutes from '../modules/host/host.routes'
 import proficiencyRoutes from '../modules/proficiency/proficiency.routes'
@@ -21,6 +22,7 @@ router.get('/health', (req, res) => {
   })
 })
 
+router.use('/stores', storeRoutes)
 router.use('/scripts', scriptRoutes)
 router.use('/hosts', hostRoutes)
 router.use('/proficiencies', proficiencyRoutes)

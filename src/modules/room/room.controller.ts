@@ -17,6 +17,7 @@ type CreateRoomRequest = TypedRequest<
   InferSchemaType<typeof roomSchema>
 >
 
+
 type UpdateRoomRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
   Record<string, never>,
@@ -29,24 +30,45 @@ type GetRoomListRequest = TypedRequest<
   Record<string, never>
 >
 
+
 type GetRoomByIdRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
   Record<string, never>,
   Record<string, never>
 >
 
+const DEFAULT_STORE_ID = 1
+
 export const createRoom = async (req: CreateRoomRequest, res: Response, next: NextFunction) => {
   try {
+    const { storeId, ...data } = req.body
+    const effectiveStoreId = storeId ?? DEFAULT_STORE_ID
+
+    const store = await prisma.store.findUnique({
+      where: { id: effectiveStoreId },
+    })
+    if (!store) {
+      throw new AppError('门店不存在', 404)
+    }
+
     const existingRoom = await prisma.room.findUnique({
-      where: { name: req.body.name },
+      where: {
+        storeId_name: {
+          storeId: effectiveStoreId,
+          name: data.name,
+        },
+      },
     })
 
     if (existingRoom) {
-      throw new AppError('房间名称已存在', 409)
+      throw new AppError('该门店下房间名称已存在', 409)
     }
 
     const room = await prisma.room.create({
-      data: req.body,
+      data: {
+        ...data,
+        storeId: effectiveStoreId,
+      },
     })
 
     res.sendSuccess(room, '房间创建成功')
@@ -57,9 +79,12 @@ export const createRoom = async (req: CreateRoomRequest, res: Response, next: Ne
 
 export const getRoomList = async (req: GetRoomListRequest, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, isActive, keyword } = req.query
+    const { page, pageSize, isActive, keyword, storeId } = req.query
 
     const where: Record<string, unknown> = {}
+    if (storeId !== undefined) {
+      where.storeId = storeId
+    }
     if (isActive !== undefined) {
       where.isActive = isActive
     }
@@ -70,6 +95,9 @@ export const getRoomList = async (req: GetRoomListRequest, res: Response, next: 
     const [rooms, total] = await Promise.all([
       prisma.room.findMany({
         where,
+        include: {
+          store: { select: { id: true, name: true } },
+        },
         skip: (page - 1) * pageSize,
         take: pageSize,
         orderBy: { createdAt: 'desc' },
@@ -90,6 +118,7 @@ export const getRoomById = async (req: GetRoomByIdRequest, res: Response, next: 
     const room = await prisma.room.findUnique({
       where: { id },
       include: {
+        store: { select: { id: true, name: true } },
         sessions: {
           take: 10,
           orderBy: { startTime: 'desc' },
@@ -114,7 +143,7 @@ export const getRoomById = async (req: GetRoomByIdRequest, res: Response, next: 
 export const updateRoom = async (req: UpdateRoomRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
-    const { name } = req.body
+    const { storeId, name, ...data } = req.body
 
     const existingRoom = await prisma.room.findUnique({
       where: { id },
@@ -124,18 +153,38 @@ export const updateRoom = async (req: UpdateRoomRequest, res: Response, next: Ne
       throw new AppError('房间不存在', 404)
     }
 
+    const effectiveStoreId = storeId ?? existingRoom.storeId
+
+    if (storeId !== undefined && storeId !== existingRoom.storeId) {
+      const store = await prisma.store.findUnique({
+        where: { id: storeId },
+      })
+      if (!store) {
+        throw new AppError('门店不存在', 404)
+      }
+    }
+
     if (name && name !== existingRoom.name) {
       const duplicateRoom = await prisma.room.findUnique({
-        where: { name },
+        where: {
+          storeId_name: {
+            storeId: effectiveStoreId,
+            name,
+          },
+        },
       })
-      if (duplicateRoom) {
-        throw new AppError('房间名称已存在', 409)
+      if (duplicateRoom && duplicateRoom.id !== id) {
+        throw new AppError('该门店下房间名称已存在', 409)
       }
     }
 
     const room = await prisma.room.update({
       where: { id },
-      data: req.body,
+      data: {
+        ...data,
+        ...(name !== undefined && { name }),
+        ...(storeId !== undefined && { storeId }),
+      },
     })
 
     res.sendSuccess(room, '房间更新成功')
@@ -209,6 +258,7 @@ export const getRoomSchedule = async (req: GetRoomByIdRequest, res: Response, ne
     const schedule = await prisma.session.findMany({
       where,
       include: {
+        store: { select: { id: true, name: true } },
         script: { select: { id: true, name: true } },
         host: { select: { id: true, name: true } },
       },

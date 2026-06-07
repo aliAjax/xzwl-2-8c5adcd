@@ -115,10 +115,10 @@ export const refundHandler = async (req: RefundRequest, res: Response, next: Nex
 
 export const getTransactionListHandler = async (req: GetTransactionListRequest, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, customerId, type, status, startDate, endDate } = req.query
+    const { page, pageSize, storeId, customerId, type, status, startDate, endDate } = req.query
 
     const { transactions, total } = await getTransactionList(prisma, {
-      page, pageSize, customerId, type, status, startDate, endDate,
+      page, pageSize, storeId, customerId, type, status, startDate, endDate,
     })
 
     res.sendSuccess(createPaginationResult(transactions, total, page, pageSize))

@@ -29,7 +29,7 @@ type UpdateCustomerRequest = TypedRequest<
 
 export const getCustomerList = async (req: GetCustomerListRequest, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, keyword } = req.query
+    const { page, pageSize, keyword, storeId } = req.query
 
     const where: Record<string, unknown> = {}
     if (keyword) {
@@ -37,6 +37,15 @@ export const getCustomerList = async (req: GetCustomerListRequest, res: Response
         { name: { contains: keyword } },
         { phone: { contains: keyword } },
       ]
+    }
+    if (storeId) {
+      where.bookings = {
+        some: {
+          session: {
+            storeId,
+          },
+        },
+      }
     }
 
     const [customers, total] = await Promise.all([
@@ -75,6 +84,7 @@ export const getCustomerById = async (req: GetCustomerByIdRequest, res: Response
               include: {
                 script: { select: { id: true, name: true } },
                 host: { select: { id: true, name: true } },
+                store: { select: { id: true, name: true } },
               },
             },
           },
