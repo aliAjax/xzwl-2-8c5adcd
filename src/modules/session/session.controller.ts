@@ -261,7 +261,7 @@ export const getSessionById = async (req: GetSessionByIdRequest, res: Response, 
 export const updateSession = async (req: UpdateSessionRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
-    const { hostId, roomId, startTime, endTime, scriptId, maxPlayers } = req.body
+    const { hostId, roomId, startTime, endTime, scriptId, maxPlayers, status } = req.body
 
     const existingSession = await prisma.session.findUnique({
       where: { id },
@@ -320,11 +320,15 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
       }
     }
 
+    const isStatusRestored = status && 
+      (existingSession.status === SessionStatus.CANCELLED || existingSession.status === SessionStatus.COMPLETED) &&
+      status !== SessionStatus.CANCELLED && status !== SessionStatus.COMPLETED
+
     const conflictChecks: Promise<boolean>[] = []
-    if (hostId || startTime || endTime) {
+    if (hostId || startTime || endTime || isStatusRestored) {
       conflictChecks.push(checkHostConflict(finalHostId, finalStartTime, finalEndTime, id))
     }
-    if (roomId || startTime || endTime) {
+    if (roomId || startTime || endTime || isStatusRestored) {
       conflictChecks.push(checkRoomConflict(finalRoomId, finalStartTime, finalEndTime, id))
     }
     if (conflictChecks.length > 0) {
