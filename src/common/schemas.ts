@@ -167,3 +167,38 @@ export const customerUpdateSchema = z.object({
   data => Object.keys(data).length > 0,
   { message: '至少需要提供一个更新字段' }
 )
+
+const importScriptSchema = z.object({
+  type: z.literal('script'),
+  data: scriptSchema,
+})
+
+const importHostSchema = z.object({
+  type: z.literal('host'),
+  data: hostSchema,
+})
+
+const importProficiencySchema = z.object({
+  type: z.literal('proficiency'),
+  data: z.object({
+    hostId: z.number().int().positive().optional(),
+    hostPhone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }).optional(),
+    scriptId: z.number().int().positive().optional(),
+    scriptName: z.string().min(1).max(100).optional(),
+    level: z.nativeEnum(ProficiencyLevel),
+  }).refine(
+    data => (data.hostId !== undefined || data.hostPhone !== undefined) && 
+            (data.scriptId !== undefined || data.scriptName !== undefined),
+    { message: '必须提供 hostId 或 hostPhone，以及 scriptId 或 scriptName' }
+  ),
+})
+
+export const importItemSchema = z.discriminatedUnion('type', [
+  importScriptSchema,
+  importHostSchema,
+  importProficiencySchema,
+])
+
+export const importBatchSchema = z.array(importItemSchema).min(1, { message: '导入数据不能为空' })
+
+export const importConfirmSchema = importBatchSchema

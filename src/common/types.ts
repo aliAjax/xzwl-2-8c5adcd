@@ -26,3 +26,34 @@ export const createPaginationResult = <T>(
     totalPages: Math.ceil(total / pageSize),
   }
 }
+
+export interface ImportErrorItem {
+  row: number
+  type: 'script' | 'host' | 'proficiency'
+  errors: string[]
+}
+
+export interface ImportPreviewResult {
+  total: number
+  importable: number
+  errors: ImportErrorItem[]
+  summary: {
+    scripts: number
+    hosts: number
+    proficiencies: number
+  }
+}
+
+export interface ImportConfirmResult {
+  imported: number
+  scripts: { count: number; ids: number[] }
+  hosts: { count: number; ids: number[] }
+  proficiencies: { count: number; ids: number[] }
+}
+
+export interface ValidatedImportData {
+  scripts: Array<{ row: number; data: any }>
+  hosts: Array<{ row: number; data: any }>
+  proficiencies: Array<{ row: number; data: any; hostId?: number; scriptId?: number }>
+  errors: ImportErrorItem[]
+}

@@ -7,6 +7,7 @@ import roomRoutes from '../modules/room/room.routes'
 import bookingRoutes from '../modules/booking/booking.routes'
 import statsRoutes from '../modules/stats/stats.routes'
 import customerRoutes from '../modules/customer/customer.routes'
+import importRoutes from '../modules/import/import.routes'
 
 const router = Router()
 
@@ -26,5 +27,6 @@ router.use('/rooms', roomRoutes)
 router.use('/bookings', bookingRoutes)
 router.use('/stats', statsRoutes)
 router.use('/customers', customerRoutes)
+router.use('/import', importRoutes)
 
 export default router
