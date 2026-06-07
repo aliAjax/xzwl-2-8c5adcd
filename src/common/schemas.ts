@@ -122,3 +122,17 @@ export const statsQuerySchema = z.object({
   days: z.coerce.number().int().positive().max(365).optional().default(30),
   scriptId: z.coerce.number().int().positive().optional(),
 })
+
+export const customerQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  keyword: z.string().optional(),
+})
+
+export const customerUpdateSchema = z.object({
+  name: z.string().min(1).max(50).optional(),
+  phone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }).optional(),
+}).refine(
+  data => Object.keys(data).length > 0,
+  { message: '至少需要提供一个更新字段' }
+)

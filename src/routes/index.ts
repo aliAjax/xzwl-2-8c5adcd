@@ -5,6 +5,7 @@ import proficiencyRoutes from '../modules/proficiency/proficiency.routes'
 import sessionRoutes from '../modules/session/session.routes'
 import bookingRoutes from '../modules/booking/booking.routes'
 import statsRoutes from '../modules/stats/stats.routes'
+import customerRoutes from '../modules/customer/customer.routes'
 
 const router = Router()
 
@@ -22,5 +23,6 @@ router.use('/proficiencies', proficiencyRoutes)
 router.use('/sessions', sessionRoutes)
 router.use('/bookings', bookingRoutes)
 router.use('/stats', statsRoutes)
+router.use('/customers', customerRoutes)
 
 export default router
