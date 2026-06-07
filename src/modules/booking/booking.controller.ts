@@ -1,4 +1,5 @@
 import { Response, NextFunction } from 'express'
+import { Prisma, BookingStatus } from '@prisma/client'
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
@@ -17,6 +18,7 @@ import {
   getOrCreateCustomer,
 } from './booking.service'
 import { processPendingWaitlists } from '../waitlist/waitlist.service'
+import { consume as membershipConsume } from '../membership/membership.service'
 
 type CreateBookingRequest = TypedRequest<
   Record<string, never>,
@@ -44,7 +46,7 @@ type GetBookingByIdRequest = TypedRequest<
 
 export const createBooking = async (req: CreateBookingRequest, res: Response, next: NextFunction) => {
   try {
-    const { sessionId, customerName, customerPhone, playerCount, status, remark } = req.body
+    const { sessionId, customerName, customerPhone, playerCount, status, remark, useMembership, membershipAmount, operator } = req.body
 
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
@@ -61,7 +63,11 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
 
     validatePlayerCount(session.currentPlayers, session.maxPlayers, playerCount)
 
-    const booking = await prisma.$transaction(async (tx) => {
+    if (useMembership && membershipAmount === undefined) {
+      throw new AppError('使用会员余额时必须指定消费金额', 400)
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
       const customer = await getOrCreateCustomer(tx, customerName, customerPhone)
 
       const newBooking = await createBookingWithSessionUpdate(tx, {
@@ -72,10 +78,22 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
         remark,
       })
 
-      return newBooking
+      let membershipResult = null
+      if (useMembership && membershipAmount !== undefined) {
+        membershipResult = await membershipConsume(
+          tx,
+          customer.id,
+          new Prisma.Decimal(membershipAmount),
+          operator,
+          `预约消费: ${session.script.name}`,
+          newBooking.id
+        )
+      }
+
+      return { booking: newBooking, membership: membershipResult }
     })
 
-    res.sendSuccess(booking, '预约成功')
+    res.sendSuccess(result, result.membership ? '预约成功，已从会员余额扣款' : '预约成功')
   } catch (error) {
     next(error)
   }
@@ -164,11 +182,11 @@ export const getBookingById = async (req: GetBookingByIdRequest, res: Response, 
 export const updateBooking = async (req: UpdateBookingRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
-    const { status, playerCount, remark } = req.body
+    const { status, playerCount, remark, useMembership, membershipAmount, operator } = req.body
 
     const existingBooking = await prisma.booking.findUnique({
       where: { id },
-      include: { session: true },
+      include: { session: { include: { script: true } } },
     })
 
     if (!existingBooking) {
@@ -179,10 +197,17 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
     const playerCountDecreased = playerCountChanged && playerCount! < existingBooking.playerCount
     const statusChangedToCancelled = status === 'CANCELLED' && existingBooking.status !== 'CANCELLED'
     const statusChangedFromCancelled = status !== undefined && status !== 'CANCELLED' && existingBooking.status === 'CANCELLED'
+    const statusChangedToConfirmed = status === 'CONFIRMED' && existingBooking.status !== 'CONFIRMED'
     const shouldProcessWaitlist = playerCountDecreased || statusChangedToCancelled
     const bookingWasActive = existingBooking.status !== 'CANCELLED'
 
-    const booking = await prisma.$transaction(async (tx) => {
+    if (useMembership && membershipAmount === undefined) {
+      throw new AppError('使用会员余额时必须指定消费金额', 400)
+    }
+
+    const shouldConsume = statusChangedToConfirmed && useMembership && membershipAmount !== undefined
+
+    const result = await prisma.$transaction(async (tx) => {
       const finalPlayerCount = playerCount !== undefined ? playerCount : existingBooking.playerCount
 
       if (statusChangedToCancelled && bookingWasActive) {
@@ -232,7 +257,19 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
         },
       })
 
-      return updatedBooking
+      let membershipResult = null
+      if (shouldConsume) {
+        membershipResult = await membershipConsume(
+          tx,
+          existingBooking.customerId,
+          new Prisma.Decimal(membershipAmount!),
+          operator,
+          `确认预约消费: ${existingBooking.session.script.name}`,
+          updatedBooking.id
+        )
+      }
+
+      return { booking: updatedBooking, membership: membershipResult }
     })
 
     let waitlistResults: Array<{ waitlistId: number; bookingId: number; message: string }> = []
@@ -240,9 +277,20 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       waitlistResults = await processPendingWaitlists(existingBooking.sessionId)
     }
 
+    const message = result.membership
+      ? '预约确认成功，已从会员余额扣款'
+      : statusChangedToConfirmed
+      ? '预约确认成功'
+      : '预约更新成功'
+
     res.sendSuccess(
-      { booking, waitlistProcessed: waitlistResults.length, convertedWaitlists: waitlistResults },
-      '预约更新成功'
+      {
+        booking: result.booking,
+        membership: result.membership,
+        waitlistProcessed: waitlistResults.length,
+        convertedWaitlists: waitlistResults,
+      },
+      message
     )
   } catch (error) {
     next(error)

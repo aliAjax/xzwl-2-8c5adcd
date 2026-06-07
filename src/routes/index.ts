@@ -9,6 +9,7 @@ import waitlistRoutes from '../modules/waitlist/waitlist.routes'
 import statsRoutes from '../modules/stats/stats.routes'
 import customerRoutes from '../modules/customer/customer.routes'
 import importRoutes from '../modules/import/import.routes'
+import membershipRoutes from '../modules/membership/membership.routes'
 
 const router = Router()
 
@@ -30,5 +31,6 @@ router.use('/waitlists', waitlistRoutes)
 router.use('/stats', statsRoutes)
 router.use('/customers', customerRoutes)
 router.use('/import', importRoutes)
+router.use('/membership', membershipRoutes)
 
 export default router

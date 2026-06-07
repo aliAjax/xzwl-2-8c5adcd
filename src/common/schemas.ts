@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus } from '@prisma/client'
+import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus } from '@prisma/client'
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -132,12 +132,18 @@ export const bookingSchema = z.object({
   playerCount: z.number().int().positive(),
   status: z.nativeEnum(BookingStatus).optional().default(BookingStatus.PENDING),
   remark: z.string().optional(),
+  useMembership: z.boolean().optional().default(false),
+  membershipAmount: z.coerce.number().positive().optional(),
+  operator: z.string().optional(),
 })
 
 export const bookingUpdateSchema = z.object({
   status: z.nativeEnum(BookingStatus).optional(),
   playerCount: z.number().int().positive().optional(),
   remark: z.string().optional(),
+  useMembership: z.boolean().optional().default(false),
+  membershipAmount: z.coerce.number().positive().optional(),
+  operator: z.string().optional(),
 })
 
 export const bookingQuerySchema = z.object({
@@ -248,4 +254,53 @@ export const hostRecommendSchema = z.object({
 }).refine(data => data.endTime > data.startTime, {
   message: '结束时间必须晚于开始时间',
   path: ['endTime'],
+})
+
+export const membershipActivateSchema = z.object({
+  customerId: z.number().int().positive(),
+  initialBalance: z.coerce.number().min(0).optional().default(0),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+})
+
+export const membershipRechargeSchema = z.object({
+  customerId: z.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+})
+
+export const membershipConsumeSchema = z.object({
+  customerId: z.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+})
+
+export const membershipRefundSchema = z.object({
+  customerId: z.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+  transactionId: z.number().int().positive().optional(),
+})
+
+export const membershipTransactionQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  customerId: z.coerce.number().int().positive().optional(),
+  type: z.nativeEnum(MembershipTransactionType).optional(),
+  status: z.nativeEnum(MembershipTransactionStatus).optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+})
+
+export const customerIdParamSchema = z.object({
+  customerId: z.coerce.number().int().positive(),
+})
+
+export const bookingConsumeSchema = z.object({
+  useMembership: z.boolean().optional().default(false),
+  amount: z.coerce.number().positive().optional(),
+  operator: z.string().optional(),
 })

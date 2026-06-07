@@ -44,6 +44,18 @@ enum WaitlistStatus {
   EXPIRED
 }
 
+enum MembershipTransactionType {
+  RECHARGE
+  CONSUME
+  REFUND
+}
+
+enum MembershipTransactionStatus {
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
 model Script {
   id           Int               @id @default(autoincrement())
   name         String            @unique
@@ -132,26 +144,64 @@ model Session {
 }
 
 model Customer {
-  id        Int       @id @default(autoincrement())
+  id        Int               @id @default(autoincrement())
   name      String
-  phone     String    @unique
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  phone     String            @unique
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
   bookings  Booking[]
   waitlists Waitlist[]
+  membershipAccount MembershipAccount?
+}
+
+model MembershipAccount {
+  id          Int                     @id @default(autoincrement())
+  customerId  Int                     @unique
+  balance     Decimal                 @db.Decimal(10, 2) @default(0)
+  isActive    Boolean                 @default(true)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  customer    Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  transactions MembershipTransaction[]
+
+  @@index([customerId])
+  @@index([isActive])
+}
+
+model MembershipTransaction {
+  id              Int                         @id @default(autoincrement())
+  accountId       Int
+  type            MembershipTransactionType
+  amount          Decimal                     @db.Decimal(10, 2)
+  balanceAfter    Decimal                     @db.Decimal(10, 2)
+  status          MembershipTransactionStatus @default(SUCCESS)
+  remark          String?
+  operator        String?
+  relatedBookingId Int?
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  account         MembershipAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  relatedBooking  Booking?                    @relation(fields: [relatedBookingId], references: [id], onDelete: SetNull)
+
+  @@index([accountId])
+  @@index([type])
+  @@index([status])
+  @@index([relatedBookingId])
+  @@index([createdAt])
 }
 
 model Booking {
-  id          Int           @id @default(autoincrement())
+  id          Int                     @id @default(autoincrement())
   sessionId   Int
   customerId  Int
   playerCount Int
-  status      BookingStatus @default(PENDING)
+  status      BookingStatus           @default(PENDING)
   remark      String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  session     Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  customer    Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  session     Session                 @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  customer    Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  membershipTransactions MembershipTransaction[]
 
   @@index([sessionId])
   @@index([customerId])
