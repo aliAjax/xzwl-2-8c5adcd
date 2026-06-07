@@ -83,14 +83,27 @@ model HostProficiency {
   @@index([scriptId])
 }
 
+model Room {
+  id         Int       @id @default(autoincrement())
+  name       String    @unique
+  capacity   Int
+  isActive   Boolean   @default(true)
+  remark     String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  sessions   Session[]
+
+  @@index([isActive])
+}
+
 model Session {
   id            Int            @id @default(autoincrement())
   scriptId      Int
   hostId        Int
+  roomId        Int
   startTime     DateTime
   endTime       DateTime
   status        SessionStatus  @default(PENDING)
-  room          String?
   price         Decimal        @db.Decimal(10, 2)
   currentPlayers Int           @default(0)
   maxPlayers    Int
@@ -99,10 +112,12 @@ model Session {
   updatedAt     DateTime       @updatedAt
   script        Script         @relation(fields: [scriptId], references: [id], onDelete: Cascade)
   host          Host           @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  room          Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
   bookings      Booking[]
 
   @@index([scriptId])
   @@index([hostId])
+  @@index([roomId])
   @@index([startTime])
   @@index([status])
   @@index([startTime, endTime])

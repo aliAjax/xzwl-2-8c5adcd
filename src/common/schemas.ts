@@ -39,6 +39,25 @@ export const hostUpdateSchema = hostSchema.partial().refine(
   { message: '至少需要提供一个更新字段' }
 )
 
+export const roomSchema = z.object({
+  name: z.string().min(1).max(50),
+  capacity: z.number().int().positive(),
+  isActive: z.boolean().optional().default(true),
+  remark: z.string().optional(),
+})
+
+export const roomUpdateSchema = roomSchema.partial().refine(
+  data => Object.keys(data).length > 0,
+  { message: '至少需要提供一个更新字段' }
+)
+
+export const roomQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  isActive: z.coerce.boolean().optional(),
+  keyword: z.string().optional(),
+})
+
 export const proficiencySchema = z.object({
   hostId: z.number().int().positive(),
   scriptId: z.number().int().positive(),
@@ -52,10 +71,10 @@ export const proficiencyUpdateSchema = z.object({
 export const sessionSchema = z.object({
   scriptId: z.number().int().positive(),
   hostId: z.number().int().positive(),
+  roomId: z.number().int().positive(),
   startTime: z.coerce.date(),
   endTime: z.coerce.date(),
   status: z.nativeEnum(SessionStatus).optional().default(SessionStatus.PENDING),
-  room: z.string().optional(),
   price: z.coerce.number().positive(),
   maxPlayers: z.number().int().positive(),
   remark: z.string().optional(),
@@ -67,10 +86,10 @@ export const sessionSchema = z.object({
 export const sessionUpdateSchema = z.object({
   scriptId: z.number().int().positive().optional(),
   hostId: z.number().int().positive().optional(),
+  roomId: z.number().int().positive().optional(),
   startTime: z.coerce.date().optional(),
   endTime: z.coerce.date().optional(),
   status: z.nativeEnum(SessionStatus).optional(),
-  room: z.string().optional(),
   price: z.coerce.number().positive().optional(),
   maxPlayers: z.number().int().positive().optional(),
   remark: z.string().optional(),
@@ -89,6 +108,7 @@ export const sessionQuerySchema = z.object({
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
   scriptId: z.coerce.number().int().positive().optional(),
   hostId: z.coerce.number().int().positive().optional(),
+  roomId: z.coerce.number().int().positive().optional(),
   status: z.nativeEnum(SessionStatus).optional(),
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),

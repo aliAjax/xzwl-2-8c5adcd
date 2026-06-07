@@ -76,13 +76,50 @@ const checkHostConflict = async (
   return false
 }
 
+const checkRoomConflict = async (
+  roomId: number,
+  startTime: Date,
+  endTime: Date,
+  excludeSessionId?: number
+): Promise<boolean> => {
+  const conflictingSessions = await prisma.session.findMany({
+    where: {
+      roomId,
+      id: excludeSessionId ? { not: excludeSessionId } : undefined,
+      status: {
+        notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED],
+      },
+      OR: [
+        {
+          startTime: { lt: endTime },
+          endTime: { gt: startTime },
+        },
+      ],
+    },
+    include: {
+      script: { select: { name: true } },
+      room: { select: { name: true } },
+    },
+  })
+
+  if (conflictingSessions.length > 0) {
+    const conflictInfo = conflictingSessions
+      .map(s => `${s.script.name} (${s.startTime.toLocaleString()} - ${s.endTime.toLocaleString()})`)
+      .join(', ')
+    throw new AppError(`房间时间冲突，已有场次：${conflictInfo}`, 409)
+  }
+
+  return false
+}
+
 export const createSession = async (req: CreateSessionRequest, res: Response, next: NextFunction) => {
   try {
-    const { scriptId, hostId, startTime, endTime, maxPlayers } = req.body
+    const { scriptId, hostId, roomId, startTime, endTime, maxPlayers } = req.body
 
-    const [script, host] = await Promise.all([
+    const [script, host, room] = await Promise.all([
       prisma.script.findUnique({ where: { id: scriptId } }),
       prisma.host.findUnique({ where: { id: hostId } }),
+      prisma.room.findUnique({ where: { id: roomId } }),
     ])
 
     if (!script) {
@@ -91,6 +128,12 @@ export const createSession = async (req: CreateSessionRequest, res: Response, ne
     if (!host) {
       throw new AppError('主持人不存在', 404)
     }
+    if (!room) {
+      throw new AppError('房间不存在', 404)
+    }
+    if (!room.isActive) {
+      throw new AppError('该房间已被禁用', 400)
+    }
 
     if (maxPlayers > script.maxPlayers) {
       throw new AppError(`场次人数不能超过剧本最大人数 ${script.maxPlayers} 人`, 400)
@@ -98,8 +141,14 @@ export const createSession = async (req: CreateSessionRequest, res: Response, ne
     if (maxPlayers < script.minPlayers) {
       throw new AppError(`场次人数不能少于剧本最小人数 ${script.minPlayers} 人`, 400)
     }
+    if (maxPlayers > room.capacity) {
+      throw new AppError(`场次人数不能超过房间容量 ${room.capacity} 人`, 400)
+    }
 
-    await checkHostConflict(hostId, startTime, endTime)
+    await Promise.all([
+      checkHostConflict(hostId, startTime, endTime),
+      checkRoomConflict(roomId, startTime, endTime),
+    ])
 
     const session = await prisma.session.create({
       data: {
@@ -109,6 +158,7 @@ export const createSession = async (req: CreateSessionRequest, res: Response, ne
       include: {
         script: { select: { id: true, name: true } },
         host: { select: { id: true, name: true } },
+        room: { select: { id: true, name: true, capacity: true } },
       },
     })
 
@@ -125,6 +175,7 @@ export const getSessionList = async (req: GetSessionListRequest, res: Response, 
       pageSize,
       scriptId,
       hostId,
+      roomId,
       status,
       startDate,
       endDate,
@@ -133,6 +184,7 @@ export const getSessionList = async (req: GetSessionListRequest, res: Response, 
     const where: Record<string, unknown> = {}
     if (scriptId) where.scriptId = scriptId
     if (hostId) where.hostId = hostId
+    if (roomId) where.roomId = roomId
     if (status) where.status = status
     if (startDate && endDate) {
       where.startTime = { gte: startDate }
@@ -149,6 +201,7 @@ export const getSessionList = async (req: GetSessionListRequest, res: Response, 
         include: {
           script: { select: { id: true, name: true, minPlayers: true, maxPlayers: true } },
           host: { select: { id: true, name: true, phone: true } },
+          room: { select: { id: true, name: true, capacity: true } },
           _count: {
             select: { bookings: true },
           },
@@ -186,6 +239,7 @@ export const getSessionById = async (req: GetSessionByIdRequest, res: Response, 
           },
         },
         host: { select: { id: true, name: true, phone: true, avatar: true } },
+        room: { select: { id: true, name: true, capacity: true } },
         bookings: {
           include: {
             customer: { select: { id: true, name: true, phone: true } },
@@ -207,11 +261,11 @@ export const getSessionById = async (req: GetSessionByIdRequest, res: Response, 
 export const updateSession = async (req: UpdateSessionRequest, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params
-    const { hostId, startTime, endTime, scriptId, maxPlayers } = req.body
+    const { hostId, roomId, startTime, endTime, scriptId, maxPlayers } = req.body
 
     const existingSession = await prisma.session.findUnique({
       where: { id },
-      include: { script: true },
+      include: { script: true, room: true },
     })
 
     if (!existingSession) {
@@ -220,27 +274,42 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
 
     const finalScriptId = scriptId || existingSession.scriptId
     const finalHostId = hostId || existingSession.hostId
+    const finalRoomId = roomId || existingSession.roomId
     const finalStartTime = startTime || existingSession.startTime
     const finalEndTime = endTime || existingSession.endTime
     const finalMaxPlayers = maxPlayers || existingSession.maxPlayers
 
-    if (scriptId) {
-      const script = await prisma.script.findUnique({ where: { id: scriptId } })
-      if (!script) {
-        throw new AppError('剧本不存在', 404)
-      }
+    const [script, room] = await Promise.all([
+      scriptId
+        ? prisma.script.findUnique({ where: { id: scriptId } })
+        : Promise.resolve(existingSession.script),
+      roomId
+        ? prisma.room.findUnique({ where: { id: roomId } })
+        : Promise.resolve(existingSession.room),
+    ])
+
+    if (scriptId && !script) {
+      throw new AppError('剧本不存在', 404)
+    }
+    if (roomId && !room) {
+      throw new AppError('房间不存在', 404)
+    }
+    if (room && !room.isActive) {
+      throw new AppError('该房间已被禁用', 400)
+    }
+
+    if (script) {
       if (finalMaxPlayers > script.maxPlayers) {
         throw new AppError(`场次人数不能超过剧本最大人数 ${script.maxPlayers} 人`, 400)
       }
       if (finalMaxPlayers < script.minPlayers) {
         throw new AppError(`场次人数不能少于剧本最小人数 ${script.minPlayers} 人`, 400)
       }
-    } else {
-      if (finalMaxPlayers > existingSession.script.maxPlayers) {
-        throw new AppError(`场次人数不能超过剧本最大人数 ${existingSession.script.maxPlayers} 人`, 400)
-      }
-      if (finalMaxPlayers < existingSession.script.minPlayers) {
-        throw new AppError(`场次人数不能少于剧本最小人数 ${existingSession.script.minPlayers} 人`, 400)
+    }
+
+    if (room) {
+      if (finalMaxPlayers > room.capacity) {
+        throw new AppError(`场次人数不能超过房间容量 ${room.capacity} 人`, 400)
       }
     }
 
@@ -251,8 +320,15 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
       }
     }
 
+    const conflictChecks: Promise<boolean>[] = []
     if (hostId || startTime || endTime) {
-      await checkHostConflict(finalHostId, finalStartTime, finalEndTime, id)
+      conflictChecks.push(checkHostConflict(finalHostId, finalStartTime, finalEndTime, id))
+    }
+    if (roomId || startTime || endTime) {
+      conflictChecks.push(checkRoomConflict(finalRoomId, finalStartTime, finalEndTime, id))
+    }
+    if (conflictChecks.length > 0) {
+      await Promise.all(conflictChecks)
     }
 
     const session = await prisma.session.update({
@@ -261,6 +337,7 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
       include: {
         script: { select: { id: true, name: true } },
         host: { select: { id: true, name: true } },
+        room: { select: { id: true, name: true, capacity: true } },
       },
     })
 
@@ -312,6 +389,7 @@ export const getHostSchedule = async (req: GetHostScheduleRequest, res: Response
       where,
       include: {
         script: { select: { id: true, name: true } },
+        room: { select: { id: true, name: true } },
       },
       orderBy: { startTime: 'asc' },
     })
