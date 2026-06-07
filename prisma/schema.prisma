@@ -67,8 +67,8 @@ model Store {
   name              String    @unique
   address           String?
   phone             String?
-  businessStartTime String?   @default("10:00")
-  businessEndTime   String?   @default("23:00")
+  businessStartTime String    @default("10:00") @db.VarChar(5)
+  businessEndTime   String    @default("23:00") @db.VarChar(5)
   isActive          Boolean   @default(true)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
