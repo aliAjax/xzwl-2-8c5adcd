@@ -1,0 +1,86 @@
+import { Response, NextFunction } from 'express'
+import { createPaginationResult } from '../../common/types'
+import { TypedRequest, InferSchemaType } from '../../common/express'
+import {
+  dailyCloseCreateSchema,
+  dailyCloseQuerySchema,
+  dailyCloseVoidSchema,
+  idParamSchema,
+} from '../../common/schemas'
+import {
+  createDailyClose,
+  getDailyCloseList,
+  getDailyCloseDetail,
+  voidAndRecreateDailyClose,
+} from './dailyClose.service'
+
+type CreateDailyCloseRequest = TypedRequest<
+  Record<string, never>,
+  Record<string, never>,
+  InferSchemaType<typeof dailyCloseCreateSchema>
+>
+
+type GetDailyCloseListRequest = TypedRequest<
+  Record<string, never>,
+  InferSchemaType<typeof dailyCloseQuerySchema>,
+  Record<string, never>
+>
+
+type GetDailyCloseDetailRequest = TypedRequest<
+  InferSchemaType<typeof idParamSchema>,
+  Record<string, never>,
+  Record<string, never>
+>
+
+type VoidDailyCloseRequest = TypedRequest<
+  InferSchemaType<typeof idParamSchema>,
+  Record<string, never>,
+  InferSchemaType<typeof dailyCloseVoidSchema>
+>
+
+export const create = async (req: CreateDailyCloseRequest, res: Response, next: NextFunction) => {
+  try {
+    const result = await createDailyClose(req.body)
+    res.sendSuccess(result, '日结单创建成功')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getList = async (req: GetDailyCloseListRequest, res: Response, next: NextFunction) => {
+  try {
+    const { page, pageSize, storeId, status, startDate, endDate } = req.query
+    const { list, total } = await getDailyCloseList({
+      page,
+      pageSize,
+      storeId,
+      status,
+      startDate,
+      endDate,
+    })
+    res.sendSuccess(createPaginationResult(list, total, page, pageSize))
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getDetail = async (req: GetDailyCloseDetailRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params
+    const result = await getDailyCloseDetail(id)
+    res.sendSuccess(result)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const voidAndRecreate = async (req: VoidDailyCloseRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params
+    const { operator, remark } = req.body
+    const result = await voidAndRecreateDailyClose(id, { operator, remark })
+    res.sendSuccess(result, '日结单作废重开成功')
+  } catch (error) {
+    next(error)
+  }
+}

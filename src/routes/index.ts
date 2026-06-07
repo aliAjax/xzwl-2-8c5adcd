@@ -12,6 +12,7 @@ import customerRoutes from '../modules/customer/customer.routes'
 import importRoutes from '../modules/import/import.routes'
 import membershipRoutes from '../modules/membership/membership.routes'
 import scheduleRoutes from '../modules/schedule/schedule.routes'
+import dailyCloseRoutes from '../modules/dailyClose/dailyClose.routes'
 
 const router = Router()
 
@@ -36,5 +37,6 @@ router.use('/customers', customerRoutes)
 router.use('/import', importRoutes)
 router.use('/membership', membershipRoutes)
 router.use('/schedules', scheduleRoutes)
+router.use('/daily-closes', dailyCloseRoutes)
 
 export default router

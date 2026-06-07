@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus } from '@prisma/client'
+import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus, StoreDailyCloseStatus } from '@prisma/client'
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -431,5 +431,26 @@ export const storeBusinessHoursSchema = z.object({
 }, {
   message: '营业结束时间必须晚于开始时间',
   path: ['businessEndTime'],
+})
+
+export const dailyCloseCreateSchema = z.object({
+  storeId: z.coerce.number().int().positive(),
+  businessDate: z.coerce.date(),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+})
+
+export const dailyCloseQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
+  status: z.nativeEnum(StoreDailyCloseStatus).optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+})
+
+export const dailyCloseVoidSchema = z.object({
+  operator: z.string().optional(),
+  remark: z.string().optional(),
 })
 

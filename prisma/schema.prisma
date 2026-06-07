@@ -50,6 +50,11 @@ enum SchedulePlanStatus {
   CANCELLED
 }
 
+enum StoreDailyCloseStatus {
+  NORMAL
+  VOIDED
+}
+
 enum MembershipTransactionType {
   RECHARGE
   CONSUME
@@ -77,6 +82,7 @@ model Store {
   hosts             HostStore[]
   sessions          Session[]
   schedulePlans     SchedulePlan[]
+  dailyCloses       StoreDailyClose[]
 
   @@index([isActive])
 }
@@ -322,4 +328,98 @@ model ScheduleDraftSession {
   @@index([scriptId])
   @@index([hostId])
   @@index([roomId])
+}
+
+model StoreDailyClose {
+  id                     Int                      @id @default(autoincrement())
+  storeId                Int
+  businessDate           DateTime
+  status                 StoreDailyCloseStatus    @default(NORMAL)
+  completedSessionCount  Int                      @default(0)
+  totalBookingCount      Int                      @default(0)
+  totalPlayerCount       Int                      @default(0)
+  receivableAmount       Decimal                  @db.Decimal(10, 2) @default(0)
+  membershipConsume      Decimal                  @db.Decimal(10, 2) @default(0)
+  membershipRecharge     Decimal                  @db.Decimal(10, 2) @default(0)
+  refundAmount           Decimal                  @db.Decimal(10, 2) @default(0)
+  discrepancyAmount      Decimal                  @db.Decimal(10, 2) @default(0)
+  remark                 String?
+  operator               String?
+  originalCloseId        Int?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  store                  Store                    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  originalClose          StoreDailyClose?         @relation("OriginalClose", fields: [originalCloseId], references: [id], onDelete: SetNull)
+  voidedCloses           StoreDailyClose[]        @relation("OriginalClose")
+  sessionSnapshots       StoreDailyCloseSession[]
+  bookingSnapshots       StoreDailyCloseBooking[]
+  transactionSnapshots   StoreDailyCloseTransaction[]
+
+  @@unique([storeId, businessDate, status])
+  @@index([storeId])
+  @@index([businessDate])
+  @@index([status])
+  @@index([storeId, businessDate])
+}
+
+model StoreDailyCloseSession {
+  id                Int       @id @default(autoincrement())
+  dailyCloseId      Int
+  sessionId         Int
+  scriptName        String
+  hostName          String
+  roomName          String
+  startTime         DateTime
+  endTime           DateTime
+  price             Decimal   @db.Decimal(10, 2)
+  playerCount       Int       @default(0)
+  bookingCount      Int       @default(0)
+  sessionAmount     Decimal   @db.Decimal(10, 2) @default(0)
+  createdAt         DateTime  @default(now())
+  dailyClose        StoreDailyClose @relation(fields: [dailyCloseId], references: [id], onDelete: Cascade)
+
+  @@index([dailyCloseId])
+  @@index([sessionId])
+}
+
+model StoreDailyCloseBooking {
+  id                Int       @id @default(autoincrement())
+  dailyCloseId      Int
+  bookingId         Int
+  sessionId         Int
+  customerName      String
+  customerPhone     String
+  playerCount       Int
+  sessionPrice      Decimal   @db.Decimal(10, 2)
+  bookingAmount     Decimal   @db.Decimal(10, 2) @default(0)
+  useMembership     Boolean   @default(false)
+  membershipAmount  Decimal   @db.Decimal(10, 2) @default(0)
+  createdAt         DateTime  @default(now())
+  dailyClose        StoreDailyClose @relation(fields: [dailyCloseId], references: [id], onDelete: Cascade)
+
+  @@index([dailyCloseId])
+  @@index([bookingId])
+  @@index([sessionId])
+}
+
+model StoreDailyCloseTransaction {
+  id                 Int                         @id @default(autoincrement())
+  dailyCloseId       Int
+  transactionId      Int
+  customerName       String
+  customerPhone      String
+  type               MembershipTransactionType
+  amount             Decimal                     @db.Decimal(10, 2)
+  balanceAfter       Decimal                     @db.Decimal(10, 2)
+  status             MembershipTransactionStatus
+  remark             String?
+  operator           String?
+  relatedBookingId   Int?
+  createdAt          DateTime                    @default(now())
+  transactionCreatedAt DateTime
+  dailyClose         StoreDailyClose             @relation(fields: [dailyCloseId], references: [id], onDelete: Cascade)
+
+  @@index([dailyCloseId])
+  @@index([transactionId])
+  @@index([type])
 }
