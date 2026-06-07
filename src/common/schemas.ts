@@ -239,3 +239,13 @@ export const waitlistConfirmSchema = z.object({
 export const sessionIdParamSchema = z.object({
   sessionId: z.coerce.number().int().positive(),
 })
+
+export const hostRecommendSchema = z.object({
+  scriptId: z.number().int().positive(),
+  startTime: z.coerce.date(),
+  endTime: z.coerce.date(),
+  limit: z.coerce.number().int().positive().max(20).optional().default(5),
+}).refine(data => data.endTime > data.startTime, {
+  message: '结束时间必须晚于开始时间',
+  path: ['endTime'],
+})
