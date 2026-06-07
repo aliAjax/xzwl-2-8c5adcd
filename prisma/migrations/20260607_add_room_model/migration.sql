@@ -24,10 +24,21 @@ ALTER TABLE "Session" ADD COLUMN "roomId" INTEGER;
 CREATE INDEX "Session_roomId_idx" ON "Session"("roomId");
 
 -- Step 2: Data migration for existing sessions
--- 注意：如果你有现有的场次数据，需要先创建房间，再执行以下数据迁移
--- 可以在应用迁移前通过 API 创建默认房间，然后执行：
--- INSERT INTO "Room" (name, capacity, "isActive") VALUES ('默认房间', 8, true) ON CONFLICT DO NOTHING;
--- UPDATE "Session" SET "roomId" = (SELECT id FROM "Room" WHERE name = '默认房间' LIMIT 1) WHERE "roomId" IS NULL;
+INSERT INTO "Room" (name, capacity, "isActive", "updatedAt")
+SELECT DISTINCT
+    COALESCE(NULLIF(TRIM("room"), ''), '默认房间') AS name,
+    8 AS capacity,
+    true AS "isActive",
+    CURRENT_TIMESTAMP AS "updatedAt"
+FROM "Session"
+WHERE "roomId" IS NULL
+ON CONFLICT (name) DO NOTHING;
+
+UPDATE "Session" AS s
+SET "roomId" = r.id
+FROM "Room" AS r
+WHERE s."roomId" IS NULL
+  AND r.name = COALESCE(NULLIF(TRIM(s."room"), ''), '默认房间');
 
 -- Step 3: Add foreign key constraint
 ALTER TABLE "Session" ADD CONSTRAINT "Session_roomId_fkey" FOREIGN KEY ("roomId") REFERENCES "Room"("id") ON DELETE CASCADE ON UPDATE CASCADE;

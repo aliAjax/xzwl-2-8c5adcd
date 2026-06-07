@@ -320,7 +320,7 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
       }
     }
 
-    const isStatusRestored = status && 
+    const isStatusRestored = status &&
       (existingSession.status === SessionStatus.CANCELLED || existingSession.status === SessionStatus.COMPLETED) &&
       status !== SessionStatus.CANCELLED && status !== SessionStatus.COMPLETED
 
