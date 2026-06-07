@@ -428,47 +428,47 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
     const params: unknown[] = []
     let paramIndex = 1
 
-    conditions.push(`s.status NOT IN ($${paramIndex}, $${paramIndex + 1})`)
+    conditions.push(`s."status" NOT IN ($${paramIndex}, $${paramIndex + 1})`)
     params.push(SessionStatus.CANCELLED, SessionStatus.COMPLETED)
     paramIndex += 2
 
-    conditions.push(`(s.max_players - s.current_players) > 0`)
+    conditions.push(`(s."maxPlayers" - s."currentPlayers") > 0`)
 
     if (scriptId) {
-      conditions.push(`s.script_id = $${paramIndex}`)
+      conditions.push(`s."scriptId" = $${paramIndex}`)
       params.push(scriptId)
       paramIndex++
     }
 
     if (startDate) {
-      conditions.push(`s.start_time >= $${paramIndex}`)
+      conditions.push(`s."startTime" >= $${paramIndex}`)
       params.push(startDate)
       paramIndex++
     }
 
     if (endDate) {
-      conditions.push(`s.end_time <= $${paramIndex}`)
+      conditions.push(`s."endTime" <= $${paramIndex}`)
       params.push(endDate)
       paramIndex++
     }
 
     if (difficulty) {
-      conditions.push(`sc.difficulty = $${paramIndex}`)
+      conditions.push(`sc."difficulty" = $${paramIndex}`)
       params.push(difficulty)
       paramIndex++
     }
 
     if (keyword) {
-      conditions.push(`(sc.name ILIKE $${paramIndex} OR sc.description ILIKE $${paramIndex})`)
+      conditions.push(`(sc."name" ILIKE $${paramIndex} OR sc."description" ILIKE $${paramIndex})`)
       params.push(`%${keyword}%`)
       paramIndex++
     }
 
     if (playerCount) {
-      conditions.push(`s.max_players >= $${paramIndex}`)
+      conditions.push(`s."maxPlayers" >= $${paramIndex}`)
       params.push(playerCount)
       paramIndex++
-      conditions.push(`(s.max_players - s.current_players) >= $${paramIndex}`)
+      conditions.push(`(s."maxPlayers" - s."currentPlayers") >= $${paramIndex}`)
       params.push(playerCount)
       paramIndex++
     }
@@ -479,34 +479,34 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
     const countQuery = `
       SELECT COUNT(*) as total
       FROM "Session" s
-      INNER JOIN "Script" sc ON s.script_id = sc.id
+      INNER JOIN "Script" sc ON s."scriptId" = sc."id"
       ${whereClause}
     `
 
     const dataQuery = `
       SELECT 
-        s.id, s.script_id, s.host_id, s.room_id, s.start_time, s.end_time, 
-        s.status, s.price, s.current_players, s.max_players, s.remark,
-        s.created_at, s.updated_at,
-        (s.max_players - s.current_players) as remaining_seats,
+        s."id", s."scriptId", s."hostId", s."roomId", s."startTime", s."endTime", 
+        s."status", s."price", s."currentPlayers", s."maxPlayers", s."remark",
+        s."createdAt", s."updatedAt",
+        (s."maxPlayers" - s."currentPlayers") as "remainingSeats",
         json_build_object(
-          'id', sc.id, 'name', sc.name, 'description', sc.description,
-          'minPlayers', sc.min_players, 'maxPlayers', sc.max_players,
-          'durationMin', sc.duration_min, 'difficulty', sc.difficulty,
-          'coverImage', sc.cover_image
+          'id', sc."id", 'name', sc."name", 'description', sc."description",
+          'minPlayers', sc."minPlayers", 'maxPlayers', sc."maxPlayers",
+          'durationMin', sc."durationMin", 'difficulty', sc."difficulty",
+          'coverImage', sc."coverImage"
         ) as script,
         json_build_object(
-          'id', h.id, 'name', h.name, 'avatar', h.avatar
+          'id', h."id", 'name', h."name", 'avatar', h."avatar"
         ) as host,
         json_build_object(
-          'id', r.id, 'name', r.name, 'capacity', r.capacity
+          'id', r."id", 'name', r."name", 'capacity', r."capacity"
         ) as room
       FROM "Session" s
-      INNER JOIN "Script" sc ON s.script_id = sc.id
-      INNER JOIN "Host" h ON s.host_id = h.id
-      INNER JOIN "Room" r ON s.room_id = r.id
+      INNER JOIN "Script" sc ON s."scriptId" = sc."id"
+      INNER JOIN "Host" h ON s."hostId" = h."id"
+      INNER JOIN "Room" r ON s."roomId" = r."id"
       ${whereClause}
-      ORDER BY s.start_time ASC
+      ORDER BY s."startTime" ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `
     const dataParams = [...params, pageSize, (page - 1) * pageSize]
@@ -522,19 +522,19 @@ export const getAvailableSessions = async (req: GetAvailableSessionsRequest, res
       const record = item as Record<string, unknown>
       return {
         id: record.id,
-        scriptId: record.script_id,
-        hostId: record.host_id,
-        roomId: record.room_id,
-        startTime: record.start_time,
-        endTime: record.end_time,
+        scriptId: record.scriptId,
+        hostId: record.hostId,
+        roomId: record.roomId,
+        startTime: record.startTime,
+        endTime: record.endTime,
         status: record.status,
         price: record.price,
-        currentPlayers: record.current_players,
-        maxPlayers: record.max_players,
+        currentPlayers: record.currentPlayers,
+        maxPlayers: record.maxPlayers,
         remark: record.remark,
-        createdAt: record.created_at,
-        updatedAt: record.updated_at,
-        remainingSeats: record.remaining_seats,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        remainingSeats: record.remainingSeats,
         script: record.script,
         host: record.host,
         room: record.room,
