@@ -178,19 +178,21 @@ const importHostSchema = z.object({
   data: hostSchema,
 })
 
+export const importProficiencyDataSchema = z.object({
+  hostId: z.number().int().positive().optional(),
+  hostPhone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }).optional(),
+  scriptId: z.number().int().positive().optional(),
+  scriptName: z.string().min(1).max(100).optional(),
+  level: z.nativeEnum(ProficiencyLevel),
+}).refine(
+  data => (data.hostId !== undefined || data.hostPhone !== undefined) && 
+          (data.scriptId !== undefined || data.scriptName !== undefined),
+  { message: '必须提供 hostId 或 hostPhone，以及 scriptId 或 scriptName' }
+)
+
 const importProficiencySchema = z.object({
   type: z.literal('proficiency'),
-  data: z.object({
-    hostId: z.number().int().positive().optional(),
-    hostPhone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }).optional(),
-    scriptId: z.number().int().positive().optional(),
-    scriptName: z.string().min(1).max(100).optional(),
-    level: z.nativeEnum(ProficiencyLevel),
-  }).refine(
-    data => (data.hostId !== undefined || data.hostPhone !== undefined) && 
-            (data.scriptId !== undefined || data.scriptName !== undefined),
-    { message: '必须提供 hostId 或 hostPhone，以及 scriptId 或 scriptName' }
-  ),
+  data: importProficiencyDataSchema,
 })
 
 export const importItemSchema = z.discriminatedUnion('type', [

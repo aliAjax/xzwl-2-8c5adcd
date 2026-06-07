@@ -1,7 +1,7 @@
 import { Response, NextFunction } from 'express'
 import prisma from '../../prisma/client'
 import { TypedRequest, InferSchemaType } from '../../common/express'
-import { importBatchSchema, hostSchema, scriptSchema } from '../../common/schemas'
+import { importBatchSchema, hostSchema, scriptSchema, importProficiencyDataSchema } from '../../common/schemas'
 import { ImportPreviewResult, ImportConfirmResult, ValidatedImportData } from '../../common/types'
 
 type ImportPreviewRequest = TypedRequest<
@@ -11,6 +11,64 @@ type ImportPreviewRequest = TypedRequest<
 >
 
 type ImportConfirmRequest = ImportPreviewRequest
+
+const fieldLabels: Record<string, string> = {
+  name: '名称',
+  description: '描述',
+  minPlayers: '最小人数',
+  maxPlayers: '最大人数',
+  durationMin: '时长(分钟)',
+  difficulty: '难度',
+  coverImage: '封面图片',
+  isActive: '是否启用',
+  phone: '手机号',
+  avatar: '头像',
+  hostId: '主持人ID',
+  hostPhone: '主持人手机号',
+  scriptId: '剧本ID',
+  scriptName: '剧本名称',
+  level: '熟练度等级',
+}
+
+const formatFieldError = (field: string, message: string, value?: unknown): string => {
+  const label = fieldLabels[field] || field
+  const valueStr = value !== undefined ? ` (值: ${JSON.stringify(value)})` : ''
+  return `${label}: ${message}${valueStr}`
+}
+
+const addErrorWithField = (
+  result: ValidatedImportData,
+  row: number,
+  type: 'script' | 'host' | 'proficiency',
+  error: string,
+  field?: string,
+  value?: unknown
+) => {
+  const existing = result.errors.find(e => e.row === row)
+  if (existing) {
+    if (!existing.errors.includes(error)) {
+      existing.errors.push(error)
+    }
+    if (field) {
+      if (!existing.fieldErrors) {
+        existing.fieldErrors = []
+      }
+      if (!existing.fieldErrors.some(fe => fe.field === field && fe.message === error)) {
+        existing.fieldErrors.push({ field, message: error, value })
+      }
+    }
+  } else {
+    const errorItem: ValidatedImportData['errors'][0] = {
+      row,
+      type,
+      errors: [error],
+    }
+    if (field) {
+      errorItem.fieldErrors = [{ field, message: error, value }]
+    }
+    result.errors.push(errorItem)
+  }
+}
 
 const validateImportData = async (
   items: InferSchemaType<typeof importBatchSchema>
@@ -25,18 +83,28 @@ const validateImportData = async (
   const batchPhoneMap = new Map<string, number[]>()
   const batchScriptNameMap = new Map<string, number[]>()
   const batchProficiencyKeyMap = new Map<string, number[]>()
-  const zodErrors: Map<number, string[]> = new Map()
+  const zodErrorRows = new Set<number>()
 
   items.forEach((item, index) => {
     const row = index + 1
-    const schema = item.type === 'script' ? scriptSchema : item.type === 'host' ? hostSchema : null
+    let schema = null
+    if (item.type === 'script') {
+      schema = scriptSchema
+    } else if (item.type === 'host') {
+      schema = hostSchema
+    } else if (item.type === 'proficiency') {
+      schema = importProficiencyDataSchema
+    }
     
     if (schema) {
       const parseResult = schema.safeParse(item.data)
       if (!parseResult.success) {
-        const errors = parseResult.error.errors.map(e => `${e.path.join('.')}: ${e.message}`)
-        zodErrors.set(row, errors)
-        result.errors.push({ row, type: item.type, errors })
+        zodErrorRows.add(row)
+        parseResult.error.errors.forEach(e => {
+          const field = e.path.join('.')
+          const message = formatFieldError(field, e.message, (item.data as any)[field])
+          addErrorWithField(result, row, item.type, message, field, (item.data as any)[field])
+        })
       }
     }
 
@@ -62,37 +130,57 @@ const validateImportData = async (
   const phoneList = Array.from(batchPhoneMap.keys())
   const scriptNameList = Array.from(batchScriptNameMap.keys())
 
-  const [existingHosts, existingScripts] = await Promise.all([
+  const hostIdsToCheck = new Set<number>()
+  const scriptIdsToCheck = new Set<number>()
+  const proficiencyHostPhonesToCheck = new Set<string>()
+  const proficiencyScriptNamesToCheck = new Set<string>()
+
+  items.forEach((item, index) => {
+    if (item.type !== 'proficiency') return
+    const data = item.data as any
+    if (data.hostId) hostIdsToCheck.add(data.hostId)
+    if (data.scriptId) scriptIdsToCheck.add(data.scriptId)
+    if (data.hostPhone) proficiencyHostPhonesToCheck.add(data.hostPhone)
+    if (data.scriptName) proficiencyScriptNamesToCheck.add(data.scriptName)
+  })
+
+  const [
+    existingHostsByPhone,
+    existingScriptsByName,
+    existingHostsById,
+    existingScriptsById,
+    proficiencyHostsByPhone,
+    proficiencyScriptsByName,
+  ] = await Promise.all([
     phoneList.length > 0 ? prisma.host.findMany({ where: { phone: { in: phoneList } }, select: { phone: true } }) : Promise.resolve([]),
     scriptNameList.length > 0 ? prisma.script.findMany({ where: { name: { in: scriptNameList } }, select: { name: true } }) : Promise.resolve([]),
+    hostIdsToCheck.size > 0 ? prisma.host.findMany({ where: { id: { in: Array.from(hostIdsToCheck) } }, select: { id: true } }) : Promise.resolve([]),
+    scriptIdsToCheck.size > 0 ? prisma.script.findMany({ where: { id: { in: Array.from(scriptIdsToCheck) } }, select: { id: true } }) : Promise.resolve([]),
+    proficiencyHostPhonesToCheck.size > 0 ? prisma.host.findMany({ where: { phone: { in: Array.from(proficiencyHostPhonesToCheck) } }, select: { id: true, phone: true } }) : Promise.resolve([]),
+    proficiencyScriptNamesToCheck.size > 0 ? prisma.script.findMany({ where: { name: { in: Array.from(proficiencyScriptNamesToCheck) } }, select: { id: true, name: true } }) : Promise.resolve([]),
   ])
 
-  const existingPhoneSet = new Set(existingHosts.map(h => h.phone))
-  const existingScriptNameSet = new Set(existingScripts.map(s => s.name))
-
-  const addError = (row: number, type: 'script' | 'host' | 'proficiency', error: string) => {
-    const existing = result.errors.find(e => e.row === row)
-    if (existing) {
-      if (!existing.errors.includes(error)) {
-        existing.errors.push(error)
-      }
-    } else {
-      result.errors.push({ row, type, errors: [error] })
-    }
-  }
+  const existingPhoneSet = new Set(existingHostsByPhone.map(h => h.phone))
+  const existingScriptNameSet = new Set(existingScriptsByName.map(s => s.name))
+  const existingHostIdSet = new Set(existingHostsById.map(h => h.id))
+  const existingScriptIdSet = new Set(existingScriptsById.map(s => s.id))
+  const proficiencyHostPhoneToId = new Map(proficiencyHostsByPhone.map(h => [h.phone, h.id]))
+  const proficiencyScriptNameToId = new Map(proficiencyScriptsByName.map(s => [s.name, s.id]))
 
   batchPhoneMap.forEach((rows, phone) => {
     if (rows.length > 1) {
       rows.forEach(row => {
-        if (!zodErrors.has(row)) {
-          addError(row, 'host', `批次内存在重复手机号: ${phone}`)
+        if (!zodErrorRows.has(row)) {
+          const message = `批次内存在重复手机号: ${phone}`
+          addErrorWithField(result, row, 'host', message, 'phone', phone)
         }
       })
     }
     if (existingPhoneSet.has(phone)) {
       rows.forEach(row => {
-        if (!zodErrors.has(row)) {
-          addError(row, 'host', `手机号已存在: ${phone}`)
+        if (!zodErrorRows.has(row)) {
+          const message = `手机号已存在: ${phone}`
+          addErrorWithField(result, row, 'host', message, 'phone', phone)
         }
       })
     }
@@ -101,15 +189,17 @@ const validateImportData = async (
   batchScriptNameMap.forEach((rows, name) => {
     if (rows.length > 1) {
       rows.forEach(row => {
-        if (!zodErrors.has(row)) {
-          addError(row, 'script', `批次内存在重复剧本名: ${name}`)
+        if (!zodErrorRows.has(row)) {
+          const message = `批次内存在重复剧本名: ${name}`
+          addErrorWithField(result, row, 'script', message, 'name', name)
         }
       })
     }
     if (existingScriptNameSet.has(name)) {
       rows.forEach(row => {
-        if (!zodErrors.has(row)) {
-          addError(row, 'script', `剧本名已存在: ${name}`)
+        if (!zodErrorRows.has(row)) {
+          const message = `剧本名已存在: ${name}`
+          addErrorWithField(result, row, 'script', message, 'name', name)
         }
       })
     }
@@ -134,79 +224,66 @@ const validateImportData = async (
     }
   })
 
-  const phonesToCheck: string[] = []
-  const scriptNamesToCheck: string[] = []
-
   items.forEach((item, index) => {
     const row = index + 1
     if (item.type !== 'proficiency') return
 
     const data = item.data as any
-    if (data.hostPhone && !data.hostId) {
-      phonesToCheck.push(data.hostPhone)
-    }
-    if (data.scriptName && !data.scriptId) {
-      scriptNamesToCheck.push(data.scriptName)
-    }
-  })
-
-  const [hostsByPhone, scriptsByName] = await Promise.all([
-    phonesToCheck.length > 0 ? prisma.host.findMany({ where: { phone: { in: phonesToCheck } }, select: { id: true, phone: true } }) : Promise.resolve([]),
-    scriptNamesToCheck.length > 0 ? prisma.script.findMany({ where: { name: { in: scriptNamesToCheck } }, select: { id: true, name: true } }) : Promise.resolve([]),
-  ])
-
-  const hostPhoneToId = new Map(hostsByPhone.map(h => [h.phone, h.id]))
-  const scriptNameToId = new Map(scriptsByName.map(s => [s.name, s.id]))
-
-  items.forEach((item, index) => {
-    const row = index + 1
-    if (item.type !== 'proficiency') return
-
-    const data = item.data as any
-    const errors: string[] = []
     let resolvedHostId: number | undefined
     let resolvedScriptId: number | undefined
 
     if (data.hostId) {
-      resolvedHostId = data.hostId
+      if (existingHostIdSet.has(data.hostId)) {
+        resolvedHostId = data.hostId
+      } else {
+        const message = `主持人ID不存在: ${data.hostId}`
+        addErrorWithField(result, row, 'proficiency', message, 'hostId', data.hostId)
+      }
     } else if (data.hostPhone) {
-      if (hostPhoneToId.has(data.hostPhone)) {
-        resolvedHostId = hostPhoneToId.get(data.hostPhone)
+      if (proficiencyHostPhoneToId.has(data.hostPhone)) {
+        resolvedHostId = proficiencyHostPhoneToId.get(data.hostPhone)
       } else if (batchHostPhoneToIndex.has(data.hostPhone)) {
         const hostIndex = batchHostPhoneToIndex.get(data.hostPhone)!
         const hostRow = hostIndex + 1
         if (!validRows.has(hostRow)) {
-          errors.push(`引用的主持人手机号 ${data.hostPhone} 在批次内验证失败`)
+          const message = `引用的主持人手机号 ${data.hostPhone} 在批次内验证失败`
+          addErrorWithField(result, row, 'proficiency', message, 'hostPhone', data.hostPhone)
         } else {
           resolvedHostId = -1 - hostIndex
         }
       } else {
-        errors.push(`主持人不存在: ${data.hostPhone}`)
+        const message = `主持人不存在: ${data.hostPhone}`
+        addErrorWithField(result, row, 'proficiency', message, 'hostPhone', data.hostPhone)
       }
     }
 
     if (data.scriptId) {
-      resolvedScriptId = data.scriptId
+      if (existingScriptIdSet.has(data.scriptId)) {
+        resolvedScriptId = data.scriptId
+      } else {
+        const message = `剧本ID不存在: ${data.scriptId}`
+        addErrorWithField(result, row, 'proficiency', message, 'scriptId', data.scriptId)
+      }
     } else if (data.scriptName) {
-      if (scriptNameToId.has(data.scriptName)) {
-        resolvedScriptId = scriptNameToId.get(data.scriptName)
+      if (proficiencyScriptNameToId.has(data.scriptName)) {
+        resolvedScriptId = proficiencyScriptNameToId.get(data.scriptName)
       } else if (batchScriptNameToIndex.has(data.scriptName)) {
         const scriptIndex = batchScriptNameToIndex.get(data.scriptName)!
         const scriptRow = scriptIndex + 1
         if (!validRows.has(scriptRow)) {
-          errors.push(`引用的剧本名 ${data.scriptName} 在批次内验证失败`)
+          const message = `引用的剧本名 ${data.scriptName} 在批次内验证失败`
+          addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
         } else {
           resolvedScriptId = -1 - scriptIndex
         }
       } else {
-        errors.push(`剧本不存在: ${data.scriptName}`)
+        const message = `剧本不存在: ${data.scriptName}`
+        addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
       }
     }
 
-    if (errors.length > 0) {
-      result.errors.push({ row, type: 'proficiency', errors })
-      return
-    }
+    const hasErrors = result.errors.some(e => e.row === row)
+    if (hasErrors) return
 
     const profKey = `${resolvedHostId}-${resolvedScriptId}`
     if (!batchProficiencyKeyMap.has(profKey)) {
@@ -226,10 +303,13 @@ const validateImportData = async (
     if (rows.length > 1) {
       rows.forEach(row => {
         const existing = result.errors.find(e => e.row === row)
+        const message = '批次内存在重复的主持人-剧本熟练度组合'
         if (existing) {
-          existing.errors.push('批次内存在重复的主持人-剧本熟练度组合')
+          if (!existing.errors.includes(message)) {
+            existing.errors.push(message)
+          }
         } else {
-          result.errors.push({ row, type: 'proficiency', errors: ['批次内存在重复的主持人-剧本熟练度组合'] })
+          addErrorWithField(result, row, 'proficiency', message)
         }
       })
       result.proficiencies = result.proficiencies.filter(p => !rows.includes(p.row))

@@ -27,10 +27,17 @@ export const createPaginationResult = <T>(
   }
 }
 
+export interface ImportFieldError {
+  field: string
+  message: string
+  value?: unknown
+}
+
 export interface ImportErrorItem {
   row: number
   type: 'script' | 'host' | 'proficiency'
   errors: string[]
+  fieldErrors?: ImportFieldError[]
 }
 
 export interface ImportPreviewResult {
