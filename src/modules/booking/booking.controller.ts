@@ -175,17 +175,46 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       throw new AppError('预约记录不存在', 404)
     }
 
-    const playerCountDecreased = playerCount !== undefined && playerCount < existingBooking.playerCount
+    const playerCountChanged = playerCount !== undefined && playerCount !== existingBooking.playerCount
+    const playerCountDecreased = playerCountChanged && playerCount! < existingBooking.playerCount
     const statusChangedToCancelled = status === 'CANCELLED' && existingBooking.status !== 'CANCELLED'
+    const statusChangedFromCancelled = status !== undefined && status !== 'CANCELLED' && existingBooking.status === 'CANCELLED'
     const shouldProcessWaitlist = playerCountDecreased || statusChangedToCancelled
+    const bookingWasActive = existingBooking.status !== 'CANCELLED'
 
     const booking = await prisma.$transaction(async (tx) => {
-      if (playerCount !== undefined && playerCount !== existingBooking.playerCount) {
+      const finalPlayerCount = playerCount !== undefined ? playerCount : existingBooking.playerCount
+
+      if (statusChangedToCancelled && bookingWasActive) {
+        await tx.session.update({
+          where: { id: existingBooking.sessionId },
+          data: {
+            currentPlayers: {
+              decrement: existingBooking.playerCount,
+            },
+          },
+        })
+      } else if (statusChangedFromCancelled) {
+        const currentSession = await tx.session.findUnique({
+          where: { id: existingBooking.sessionId },
+        })
+        if (currentSession) {
+          validatePlayerCount(currentSession.currentPlayers, currentSession.maxPlayers, finalPlayerCount)
+        }
+        await tx.session.update({
+          where: { id: existingBooking.sessionId },
+          data: {
+            currentPlayers: {
+              increment: finalPlayerCount,
+            },
+          },
+        })
+      } else if (playerCountChanged && bookingWasActive) {
         await updateBookingPlayerCount(
           tx,
           existingBooking.sessionId,
           existingBooking.playerCount,
-          playerCount
+          playerCount!
         )
       }
 

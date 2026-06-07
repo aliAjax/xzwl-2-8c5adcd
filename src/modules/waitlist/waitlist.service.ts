@@ -161,27 +161,34 @@ export const processPendingWaitlists = async (
       orderBy: { createdAt: 'asc' },
     })
 
-    let remainingSlots = session.maxPlayers - session.currentPlayers
-
     for (const waitlist of pendingWaitlists) {
+      const currentSession = await tx.session.findUnique({
+        where: { id: sessionId },
+      })
+      if (!currentSession) {
+        break
+      }
+
+      const remainingSlots = currentSession.maxPlayers - currentSession.currentPlayers
       if (remainingSlots <= 0) {
         break
       }
 
-      if (waitlist.playerCount <= remainingSlots) {
-        try {
-          const result = await confirmWaitlistToBookingInternal(tx, waitlist.id)
-          if (result.success && result.bookingId) {
-            results.push({
-              waitlistId: waitlist.id,
-              bookingId: result.bookingId,
-              message: result.message,
-            })
-            remainingSlots -= waitlist.playerCount
-          }
-        } catch (error) {
-          continue
+      if (waitlist.playerCount > remainingSlots) {
+        break
+      }
+
+      try {
+        const result = await confirmWaitlistToBookingInternal(tx, waitlist.id)
+        if (result.success && result.bookingId) {
+          results.push({
+            waitlistId: waitlist.id,
+            bookingId: result.bookingId,
+            message: result.message,
+          })
         }
+      } catch (error) {
+        continue
       }
     }
   })
