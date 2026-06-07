@@ -11,6 +11,7 @@ import statsRoutes from '../modules/stats/stats.routes'
 import customerRoutes from '../modules/customer/customer.routes'
 import importRoutes from '../modules/import/import.routes'
 import membershipRoutes from '../modules/membership/membership.routes'
+import scheduleRoutes from '../modules/schedule/schedule.routes'
 
 const router = Router()
 
@@ -34,5 +35,6 @@ router.use('/stats', statsRoutes)
 router.use('/customers', customerRoutes)
 router.use('/import', importRoutes)
 router.use('/membership', membershipRoutes)
+router.use('/schedules', scheduleRoutes)
 
 export default router

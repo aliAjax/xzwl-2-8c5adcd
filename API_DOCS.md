@@ -261,6 +261,113 @@
 
 ---
 
+### 9. 排班方案管理
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| POST | `/schedules/generate` | 生成排班方案草案 |
+| GET | `/schedules` | 获取排班方案列表 |
+| GET | `/schedules/:id` | 获取排班方案详情（含草案场次） |
+| POST | `/schedules/:id/confirm` | 确认排班方案，批量创建正式场次 |
+| DELETE | `/schedules/:id` | 删除排班方案（仅草案状态） |
+| PUT | `/schedules/:planId/drafts/:draftId` | 更新草案场次 |
+| DELETE | `/schedules/:planId/drafts/:draftId` | 删除草案场次 |
+
+#### 生成排班方案请求体
+```json
+{
+  "storeId": 1,
+  "name": "国庆假期排班",
+  "startDate": "2024-10-01T00:00:00.000Z",
+  "endDate": "2024-10-07T23:59:59.000Z",
+  "remark": "国庆黄金周排班",
+  "defaultPrice": 128,
+  "sessionGapMinutes": 30
+}
+```
+
+#### 请求参数说明
+- `storeId`: 门店ID，默认1
+- `name`: 排班方案名称（1-100字符）
+- `startDate`: 排班开始日期
+- `endDate`: 排班结束日期（最大范围31天）
+- `remark`: 备注（可选）
+- `defaultPrice`: 默认场次价格，默认128
+- `sessionGapMinutes`: 场次间隔分钟数，默认30，最大120
+
+#### 排班方案状态
+- `DRAFT` - 草案（可编辑、可删除）
+- `CONFIRMED` - 已确认（已生成正式场次）
+- `CANCELLED` - 已取消
+
+#### 排班生成规则
+系统会自动综合以下因素生成最优排班方案：
+1. **剧本时长**: 根据剧本 `durationMin` 计算场次结束时间
+2. **房间容量**: 优先匹配容量合适的房间，按容量从大到小遍历
+3. **主持人所属门店**: 仅使用已分配到该门店的主持人
+4. **主持人剧本熟练度**: 优先选择熟练度高的主持人（EXPERT > PROFICIENT > INTERMEDIATE > BEGINNER）
+5. **时间冲突检测**: 检测主持人和房间在该时间段是否已有正式场次安排
+6. **门店营业时间**: 严格在 `businessStartTime` 至 `businessEndTime` 范围内安排
+
+#### 草案场次冲突标识
+生成的草案场次如存在冲突，会在 `conflictInfo` 字段中标识冲突信息：
+- 与现有正式场次冲突
+- 与草案内其他场次冲突
+
+**重要**: 存在冲突的草案场次无法确认，必须先修改或删除。
+
+#### 确认排班方案
+确认时会执行以下操作：
+1. 检查所有草案场次是否存在冲突
+2. 重新校验剧本、主持人、房间的有效性
+3. 复用现有场次创建的冲突检查逻辑（`checkHostConflict` 和 `checkRoomConflict`）
+4. 事务性批量创建正式场次
+5. 更新排班方案状态为 `CONFIRMED`
+
+#### 确认请求体
+```json
+{
+  "operator": "张三"
+}
+```
+
+#### 更新草案场次请求体
+```json
+{
+  "scriptId": 2,
+  "hostId": 3,
+  "roomId": 1,
+  "startTime": "2024-10-01T14:00:00.000Z",
+  "endTime": "2024-10-01T18:00:00.000Z",
+  "price": 158,
+  "maxPlayers": 8,
+  "remark": "调整场次"
+}
+```
+
+---
+
+### 10. 门店管理（补充）
+
+#### 门店营业时间配置
+门店模型新增营业时间字段，用于排班生成：
+- `businessStartTime`: 营业开始时间，格式 `HH:mm`，默认 `10:00`
+- `businessEndTime`: 营业结束时间，格式 `HH:mm`，默认 `23:00`
+
+#### 创建/更新门店请求体（新增字段）
+```json
+{
+  "name": "门店名称",
+  "address": "门店地址",
+  "phone": "13800138000",
+  "businessStartTime": "10:00",
+  "businessEndTime": "23:00",
+  "isActive": true
+}
+```
+
+---
+
 ## 分页参数
 
 所有列表接口支持以下分页参数：

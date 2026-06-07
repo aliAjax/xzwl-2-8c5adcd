@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus } from '@prisma/client'
+import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus } from '@prisma/client'
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -22,17 +22,40 @@ export const paginationSchema = z.object({
   storeId: z.coerce.number().int().positive().optional(),
 })
 
-export const storeSchema = z.object({
+const storeBaseSchema = z.object({
   name: z.string().min(1).max(100),
   address: z.string().optional(),
   phone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }).optional(),
+  businessStartTime: z.string().regex(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, {
+    message: '营业时间格式应为 HH:mm，例如 10:00',
+  }).optional().default('10:00'),
+  businessEndTime: z.string().regex(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, {
+    message: '营业时间格式应为 HH:mm，例如 23:00',
+  }).optional().default('23:00'),
   isActive: z.boolean().optional().default(true),
 })
 
-export const storeUpdateSchema = storeSchema.partial().refine(
-  data => Object.keys(data).length > 0,
-  { message: '至少需要提供一个更新字段' }
-)
+export const storeSchema = storeBaseSchema.refine(data => data.businessEndTime > data.businessStartTime, {
+  message: '营业结束时间必须晚于开始时间',
+  path: ['businessEndTime'],
+})
+
+const storeUpdateBaseSchema = storeBaseSchema.partial()
+
+export const storeUpdateSchema = storeUpdateBaseSchema
+  .refine(
+    (data: Record<string, unknown>) => Object.keys(data).length > 0,
+    { message: '至少需要提供一个更新字段' }
+  )
+  .refine(
+    (data: Record<string, unknown>) => {
+      if (data.businessStartTime && data.businessEndTime) {
+        return String(data.businessEndTime) > String(data.businessStartTime)
+      }
+      return true
+    },
+    { message: '营业结束时间必须晚于开始时间', path: ['businessEndTime'] }
+  )
 
 export const hostAssignStoreSchema = z.object({
   hostId: z.number().int().positive(),
@@ -340,5 +363,73 @@ export const membershipTransactionQuerySchema = z.object({
 
 export const customerIdParamSchema = z.object({
   customerId: z.coerce.number().int().positive(),
+})
+
+export const generateScheduleSchema = z.object({
+  storeId: z.coerce.number().int().positive().optional().default(1),
+  name: z.string().min(1).max(100),
+  startDate: z.coerce.date(),
+  endDate: z.coerce.date(),
+  remark: z.string().optional(),
+  defaultPrice: z.coerce.number().positive().optional().default(128),
+  sessionGapMinutes: z.coerce.number().int().nonnegative().max(120).optional().default(30),
+}).refine(data => data.endDate >= data.startDate, {
+  message: '结束日期不能早于开始日期',
+  path: ['endDate'],
+}).refine(data => {
+  const diffDays = Math.ceil((data.endDate.getTime() - data.startDate.getTime()) / (1000 * 60 * 60 * 24))
+  return diffDays <= 31
+}, {
+  message: '排班日期范围不能超过31天',
+  path: ['endDate'],
+})
+
+export const schedulePlanQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  storeId: z.coerce.number().int().positive().optional(),
+  status: z.nativeEnum(SchedulePlanStatus).optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+})
+
+export const confirmScheduleSchema = z.object({
+  operator: z.string().optional(),
+})
+
+export const scheduleDraftUpdateSchema = z.object({
+  scriptId: z.number().int().positive().optional(),
+  hostId: z.number().int().positive().optional(),
+  roomId: z.number().int().positive().optional(),
+  startTime: z.coerce.date().optional(),
+  endTime: z.coerce.date().optional(),
+  price: z.coerce.number().positive().optional(),
+  maxPlayers: z.number().int().positive().optional(),
+  remark: z.string().optional(),
+}).refine(data => {
+  if (data.startTime && data.endTime) {
+    return data.endTime > data.startTime
+  }
+  return true
+}, {
+  message: '结束时间必须晚于开始时间',
+  path: ['endTime'],
+})
+
+export const storeBusinessHoursSchema = z.object({
+  businessStartTime: z.string().regex(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, {
+    message: '营业时间格式应为 HH:mm，例如 10:00',
+  }).optional(),
+  businessEndTime: z.string().regex(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/, {
+    message: '营业时间格式应为 HH:mm，例如 23:00',
+  }).optional(),
+}).refine(data => {
+  if (data.businessStartTime && data.businessEndTime) {
+    return data.businessEndTime > data.businessStartTime
+  }
+  return true
+}, {
+  message: '营业结束时间必须晚于开始时间',
+  path: ['businessEndTime'],
 })
 

@@ -55,7 +55,7 @@ type GetAvailableSessionsRequest = TypedRequest<
 
 const DEFAULT_STORE_ID = 1
 
-const checkHostConflict = async (
+export const checkHostConflict = async (
   hostId: number,
   startTime: Date,
   endTime: Date,
@@ -91,7 +91,7 @@ const checkHostConflict = async (
   return false
 }
 
-const checkRoomConflict = async (
+export const checkRoomConflict = async (
   roomId: number,
   startTime: Date,
   endTime: Date,

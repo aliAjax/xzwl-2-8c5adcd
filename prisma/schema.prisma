@@ -44,6 +44,12 @@ enum WaitlistStatus {
   EXPIRED
 }
 
+enum SchedulePlanStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
 enum MembershipTransactionType {
   RECHARGE
   CONSUME
@@ -57,17 +63,20 @@ enum MembershipTransactionStatus {
 }
 
 model Store {
-  id          Int       @id @default(autoincrement())
-  name        String    @unique
-  address     String?
-  phone       String?
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  scripts     Script[]
-  rooms       Room[]
-  hosts       HostStore[]
-  sessions    Session[]
+  id                Int       @id @default(autoincrement())
+  name              String    @unique
+  address           String?
+  phone             String?
+  businessStartTime String?   @default("10:00")
+  businessEndTime   String?   @default("23:00")
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  scripts           Script[]
+  rooms             Room[]
+  hosts             HostStore[]
+  sessions          Session[]
+  schedulePlans     SchedulePlan[]
 
   @@index([isActive])
 }
@@ -102,6 +111,7 @@ model Script {
   store        Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
   sessions     Session[]
   proficiencies HostProficiency[]
+  draftSessions ScheduleDraftSession[]
 
   @@unique([storeId, name])
   @@index([storeId])
@@ -120,6 +130,7 @@ model Host {
   stores        HostStore[]
   sessions      Session[]
   proficiencies HostProficiency[]
+  draftSessions ScheduleDraftSession[]
 
   @@index([isActive])
 }
@@ -148,6 +159,7 @@ model Room {
   updatedAt  DateTime  @updatedAt
   store      Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
   sessions   Session[]
+  draftSessions ScheduleDraftSession[]
 
   @@unique([storeId, name])
   @@index([storeId])
@@ -266,4 +278,48 @@ model Waitlist {
   @@index([customerId])
   @@index([status])
   @@index([sessionId, status, createdAt])
+}
+
+model SchedulePlan {
+  id             Int                  @id @default(autoincrement())
+  storeId        Int
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  status         SchedulePlanStatus   @default(DRAFT)
+  remark         String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  store          Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  draftSessions  ScheduleDraftSession[]
+
+  @@index([storeId])
+  @@index([status])
+  @@index([startDate, endDate])
+}
+
+model ScheduleDraftSession {
+  id                Int               @id @default(autoincrement())
+  schedulePlanId    Int
+  scriptId          Int
+  hostId            Int
+  roomId            Int
+  startTime         DateTime
+  endTime           DateTime
+  price             Decimal           @db.Decimal(10, 2)
+  maxPlayers        Int
+  remark            String?
+  conflictInfo      String?
+  proficiencyLevel  ProficiencyLevel?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  schedulePlan      SchedulePlan      @relation(fields: [schedulePlanId], references: [id], onDelete: Cascade)
+  script            Script            @relation(fields: [scriptId], references: [id], onDelete: Cascade)
+  host              Host              @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  room              Room              @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([schedulePlanId])
+  @@index([scriptId])
+  @@index([hostId])
+  @@index([roomId])
 }
