@@ -1,12 +1,16 @@
 import { Response, NextFunction, Request } from 'express'
 import prisma from '../../prisma/client'
-import { TypedRequest, InferSchemaType } from '../../common/express'
-import { importBatchSchema, importItemSchema, hostSchema, scriptSchema, importProficiencyDataSchema } from '../../common/schemas'
+import { InferSchemaType } from '../../common/express'
+import { importItemSchema, hostSchema, scriptSchema, importProficiencyDataSchema } from '../../common/schemas'
 import { ImportPreviewResult, ImportConfirmResult, ValidatedImportData } from '../../common/types'
 
 type ImportPreviewRequest = Request
 
 type ImportConfirmRequest = Request
+type ParsedImportItem = {
+  row: number
+  item: InferSchemaType<typeof importItemSchema>
+}
 
 const fieldLabels: Record<string, string> = {
   name: '名称',
@@ -44,7 +48,7 @@ const detectType = (item: unknown): 'script' | 'host' | 'proficiency' | 'unknown
 
 const preValidateRequest = (body: unknown): {
   valid: boolean
-  items?: InferSchemaType<typeof importBatchSchema>
+  items?: ParsedImportItem[]
   errors: ValidatedImportData['errors']
   total: number
 } => {
@@ -70,7 +74,7 @@ const preValidateRequest = (body: unknown): {
     return { valid: false, errors, total: 0 }
   }
 
-  const validItems: InferSchemaType<typeof importBatchSchema> = []
+  const validItems: ParsedImportItem[] = []
 
   body.forEach((item, index) => {
     const row = index + 1
@@ -110,7 +114,7 @@ const preValidateRequest = (body: unknown): {
         }
       })
     } else {
-      validItems.push(parseResult.data)
+      validItems.push({ row, item: parseResult.data })
     }
   })
 
@@ -157,7 +161,7 @@ const addErrorWithField = (
 }
 
 const validateImportData = async (
-  items: InferSchemaType<typeof importBatchSchema>
+  items: ParsedImportItem[]
 ): Promise<ValidatedImportData> => {
   const result: ValidatedImportData = {
     scripts: [],
@@ -171,8 +175,7 @@ const validateImportData = async (
   const batchProficiencyKeyMap = new Map<string, number[]>()
   const zodErrorRows = new Set<number>()
 
-  items.forEach((item, index) => {
-    const row = index + 1
+  items.forEach(({ row, item }) => {
     let schema = null
     if (item.type === 'script') {
       schema = scriptSchema
@@ -221,7 +224,7 @@ const validateImportData = async (
   const proficiencyHostPhonesToCheck = new Set<string>()
   const proficiencyScriptNamesToCheck = new Set<string>()
 
-  items.forEach((item, index) => {
+  items.forEach(({ item }) => {
     if (item.type !== 'proficiency') return
     const data = item.data as any
     if (data.hostId) hostIdsToCheck.add(data.hostId)
@@ -291,27 +294,25 @@ const validateImportData = async (
     }
   })
 
-  const validRows = new Set(items.map((_, i) => i + 1))
+  const validRows = new Set(items.map(({ row }) => row))
   result.errors.forEach(e => validRows.delete(e.row))
 
   const batchHostPhoneToIndex = new Map<string, number>()
   const batchScriptNameToIndex = new Map<string, number>()
 
-  items.forEach((item, index) => {
-    const row = index + 1
+  items.forEach(({ row, item }) => {
     if (!validRows.has(row)) return
 
     if (item.type === 'host') {
-      batchHostPhoneToIndex.set((item.data as any).phone, index)
+      batchHostPhoneToIndex.set((item.data as any).phone, row)
       result.hosts.push({ row, data: item.data })
     } else if (item.type === 'script') {
-      batchScriptNameToIndex.set((item.data as any).name, index)
+      batchScriptNameToIndex.set((item.data as any).name, row)
       result.scripts.push({ row, data: item.data })
     }
   })
 
-  items.forEach((item, index) => {
-    const row = index + 1
+  items.forEach(({ row, item }) => {
     if (item.type !== 'proficiency') return
 
     const data = item.data as any
@@ -329,13 +330,12 @@ const validateImportData = async (
       if (proficiencyHostPhoneToId.has(data.hostPhone)) {
         resolvedHostId = proficiencyHostPhoneToId.get(data.hostPhone)
       } else if (batchHostPhoneToIndex.has(data.hostPhone)) {
-        const hostIndex = batchHostPhoneToIndex.get(data.hostPhone)!
-        const hostRow = hostIndex + 1
+        const hostRow = batchHostPhoneToIndex.get(data.hostPhone)!
         if (!validRows.has(hostRow)) {
           const message = `引用的主持人手机号 ${data.hostPhone} 在批次内验证失败`
           addErrorWithField(result, row, 'proficiency', message, 'hostPhone', data.hostPhone)
         } else {
-          resolvedHostId = -1 - hostIndex
+          resolvedHostId = -hostRow
         }
       } else {
         const message = `主持人不存在: ${data.hostPhone}`
@@ -354,13 +354,12 @@ const validateImportData = async (
       if (proficiencyScriptNameToId.has(data.scriptName)) {
         resolvedScriptId = proficiencyScriptNameToId.get(data.scriptName)
       } else if (batchScriptNameToIndex.has(data.scriptName)) {
-        const scriptIndex = batchScriptNameToIndex.get(data.scriptName)!
-        const scriptRow = scriptIndex + 1
+        const scriptRow = batchScriptNameToIndex.get(data.scriptName)!
         if (!validRows.has(scriptRow)) {
           const message = `引用的剧本名 ${data.scriptName} 在批次内验证失败`
           addErrorWithField(result, row, 'proficiency', message, 'scriptName', data.scriptName)
         } else {
-          resolvedScriptId = -1 - scriptIndex
+          resolvedScriptId = -scriptRow
         }
       } else {
         const message = `剧本不存在: ${data.scriptName}`
@@ -479,15 +478,13 @@ export const confirmImport = async (req: ImportConfirmRequest, res: Response, ne
       for (const scriptItem of validated.scripts) {
         const script = await tx.script.create({ data: scriptItem.data })
         scriptIds.push(script.id)
-        const batchIndex = scriptItem.row - 1
-        indexToScriptId.set(batchIndex, script.id)
+        indexToScriptId.set(scriptItem.row, script.id)
       }
 
       for (const hostItem of validated.hosts) {
         const host = await tx.host.create({ data: hostItem.data })
         hostIds.push(host.id)
-        const batchIndex = hostItem.row - 1
-        indexToHostId.set(batchIndex, host.id)
+        indexToHostId.set(hostItem.row, host.id)
       }
 
       for (const profItem of validated.proficiencies) {
@@ -495,12 +492,12 @@ export const confirmImport = async (req: ImportConfirmRequest, res: Response, ne
         let scriptId = profItem.scriptId!
 
         if (hostId < 0) {
-          const batchIndex = -1 - hostId
-          hostId = indexToHostId.get(batchIndex)!
+          const batchRow = -hostId
+          hostId = indexToHostId.get(batchRow)!
         }
         if (scriptId < 0) {
-          const batchIndex = -1 - scriptId
-          scriptId = indexToScriptId.get(batchIndex)!
+          const batchRow = -scriptId
+          scriptId = indexToScriptId.get(batchRow)!
         }
 
         const existing = await tx.hostProficiency.findUnique({
