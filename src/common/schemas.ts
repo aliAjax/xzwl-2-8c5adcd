@@ -1,6 +1,18 @@
 import { z } from 'zod'
 import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus, StoreDailyCloseStatus, NotificationType, NotificationStatus, NotificationChannel } from '@prisma/client'
 
+const coerceBooleanQuery = (value: unknown): boolean | undefined => {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const lower = value.toLowerCase()
+    if (lower === 'true' || lower === '1') return true
+    if (lower === 'false' || lower === '0') return false
+  }
+  return undefined
+}
+
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 })
@@ -28,7 +40,7 @@ export const scriptQuerySchema = z.object({
   keyword: z.string().optional(),
   storeId: z.coerce.number().int().positive().optional(),
   difficulty: z.nativeEnum(Difficulty).optional(),
-  isActive: z.coerce.boolean().optional(),
+  isActive: z.preprocess(coerceBooleanQuery, z.boolean().optional()),
   minPlayers: z.coerce.number().int().positive().optional(),
   maxPlayers: z.coerce.number().int().positive().optional(),
 }).refine(
@@ -127,7 +139,7 @@ export const roomUpdateSchema = roomSchema.partial().refine(
 export const roomQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
-  isActive: z.coerce.boolean().optional(),
+  isActive: z.preprocess(coerceBooleanQuery, z.boolean().optional()),
   keyword: z.string().optional(),
   storeId: z.coerce.number().int().positive().optional(),
 })
