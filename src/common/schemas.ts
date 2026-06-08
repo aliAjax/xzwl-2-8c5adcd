@@ -22,6 +22,25 @@ export const paginationSchema = z.object({
   storeId: z.coerce.number().int().positive().optional(),
 })
 
+export const scriptQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  keyword: z.string().optional(),
+  storeId: z.coerce.number().int().positive().optional(),
+  difficulty: z.nativeEnum(Difficulty).optional(),
+  isActive: z.coerce.boolean().optional(),
+  minPlayers: z.coerce.number().int().positive().optional(),
+  maxPlayers: z.coerce.number().int().positive().optional(),
+}).refine(
+  data => {
+    if (data.minPlayers !== undefined && data.maxPlayers !== undefined) {
+      return data.minPlayers <= data.maxPlayers
+    }
+    return true
+  },
+  { message: '最小人数不能大于最大人数', path: ['maxPlayers'] }
+)
+
 const storeBaseSchema = z.object({
   name: z.string().min(1).max(100),
   address: z.string().optional(),

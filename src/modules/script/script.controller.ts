@@ -6,7 +6,7 @@ import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
   scriptSchema,
   scriptUpdateSchema,
-  paginationSchema,
+  scriptQuerySchema,
   idParamSchema,
   detailQuerySchema,
 } from '../../common/schemas'
@@ -26,7 +26,7 @@ type UpdateScriptRequest = TypedRequest<
 
 type GetScriptListRequest = TypedRequest<
   Record<string, never>,
-  InferSchemaType<typeof paginationSchema>,
+  InferSchemaType<typeof scriptQuerySchema>,
   Record<string, never>
 >
 
@@ -77,11 +77,23 @@ export const createScript = async (req: CreateScriptRequest, res: Response, next
 
 export const getScriptList = async (req: GetScriptListRequest, res: Response, next: NextFunction) => {
   try {
-    const { page, pageSize, keyword, storeId } = req.query
+    const { page, pageSize, keyword, storeId, difficulty, isActive, minPlayers, maxPlayers } = req.query
 
     const where: Record<string, unknown> = {}
     if (storeId !== undefined) {
       where.storeId = storeId
+    }
+    if (difficulty !== undefined) {
+      where.difficulty = difficulty
+    }
+    if (isActive !== undefined) {
+      where.isActive = isActive
+    }
+    if (minPlayers !== undefined) {
+      where.maxPlayers = { gte: minPlayers }
+    }
+    if (maxPlayers !== undefined) {
+      where.minPlayers = { lte: maxPlayers }
     }
     if (keyword) {
       where.OR = [
