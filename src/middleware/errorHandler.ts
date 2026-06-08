@@ -4,9 +4,11 @@ import { Prisma } from '@prisma/client'
 
 export class AppError extends Error {
   statusCode: number
-  constructor(message: string, statusCode = 400) {
+  data?: unknown
+  constructor(message: string, statusCode = 400, data?: unknown) {
     super(message)
     this.statusCode = statusCode
+    this.data = data
     this.name = 'AppError'
   }
 }
@@ -20,7 +22,7 @@ export const errorHandler = (
   console.error('[Error]', err)
 
   if (err instanceof AppError) {
-    return res.sendError(err.message, err.statusCode)
+    return res.sendError(err.message, err.statusCode, err.data)
   }
 
   if (err instanceof ZodError) {

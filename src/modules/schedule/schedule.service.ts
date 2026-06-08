@@ -1,8 +1,76 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { ProficiencyLevel, SessionStatus, Host } from '@prisma/client'
+import { ProficiencyLevel, SessionStatus, Host, ScheduleDraftSession, Script, HostProficiency, HostRestDay, Room, Session, ScheduleUnassignableSlot } from '@prisma/client'
 import { checkHostConflict, checkRoomConflict } from '../session/session.controller'
 import { Decimal } from '@prisma/client/runtime/library'
+
+export enum ConflictType {
+  STORE_INVALID = 'STORE_INVALID',
+  SCRIPT_INVALID = 'SCRIPT_INVALID',
+  HOST_INVALID = 'HOST_INVALID',
+  ROOM_INVALID = 'ROOM_INVALID',
+  PROFICIENCY_INSUFFICIENT = 'PROFICIENCY_INSUFFICIENT',
+  HOST_REST_DAY = 'HOST_REST_DAY',
+  DAILY_SESSION_LIMIT_EXCEEDED = 'DAILY_SESSION_LIMIT_EXCEEDED',
+  ROOM_UNASSIGNABLE_SLOT = 'ROOM_UNASSIGNABLE_SLOT',
+  SESSION_CONFLICT_HOST = 'SESSION_CONFLICT_HOST',
+  SESSION_CONFLICT_ROOM = 'SESSION_CONFLICT_ROOM',
+  DRAFT_INTERNAL_CONFLICT_HOST = 'DRAFT_INTERNAL_CONFLICT_HOST',
+  DRAFT_INTERNAL_CONFLICT_ROOM = 'DRAFT_INTERNAL_CONFLICT_ROOM',
+  PLAYER_COUNT_INVALID = 'PLAYER_COUNT_INVALID',
+  ROOM_CAPACITY_EXCEEDED = 'ROOM_CAPACITY_EXCEEDED',
+  TIME_INVALID = 'TIME_INVALID',
+}
+
+export interface DraftConflict {
+  draftId: number
+  draftInfo: {
+    scriptName: string
+    hostName: string
+    roomName: string
+    startTime: Date
+    endTime: Date
+  }
+  conflicts: {
+    type: ConflictType
+    message: string
+    details?: Record<string, unknown>
+  }[]
+}
+
+export interface PublishValidationResult {
+  isValid: boolean
+  conflicts: DraftConflict[]
+  totalConflictCount: number
+}
+
+interface DraftSessionWithRelations extends ScheduleDraftSession {
+  script: Script
+  host: Host & { proficiencies: HostProficiency[]; restDays: HostRestDay[]; stores: { storeId: number; isActive: boolean }[] }
+  room: Room & { unassignableSlots: ScheduleUnassignableSlot[] }
+}
+
+interface ValidationContext {
+  storeId: number
+  existingSessions: Session[]
+  allProficiencies: HostProficiency[]
+  allRestDays: HostRestDay[]
+  allUnassignableSlots: ScheduleUnassignableSlot[]
+}
+
+const normalizeDate = (date: Date): Date => {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+const isSameDay = (date1: Date, date2: Date): boolean => {
+  return normalizeDate(date1).getTime() === normalizeDate(date2).getTime()
+}
+
+const hasTimeOverlap = (start1: Date, end1: Date, start2: Date, end2: Date): boolean => {
+  return start1 < end2 && end1 > start2
+}
 
 export interface GenerateScheduleParams {
   storeId: number
@@ -96,12 +164,6 @@ const getProficiencyLevel = (
 
 interface HostWithConfig extends Host {
   maxDailySessions: number | null
-}
-
-const normalizeDate = (date: Date): Date => {
-  const d = new Date(date)
-  d.setHours(0, 0, 0, 0)
-  return d
 }
 
 const getHostDailySessionCount = (
@@ -618,4 +680,438 @@ export const deleteSchedulePlan = async (planId: number) => {
   })
 
   return true
+}
+
+const validateSingleDraft = (
+  draft: DraftSessionWithRelations,
+  ctx: ValidationContext,
+  allDrafts: DraftSessionWithRelations[],
+  hostDailySessionCounts: Map<string, number>
+): DraftConflict['conflicts'] => {
+  const conflicts: DraftConflict['conflicts'] = []
+
+  if (draft.script.storeId !== ctx.storeId || !draft.script.isActive) {
+    conflicts.push({
+      type: ConflictType.SCRIPT_INVALID,
+      message: `剧本 "${draft.script.name}" 不存在、已禁用或不属于该门店`,
+      details: { scriptId: draft.scriptId, scriptName: draft.script.name },
+    })
+  }
+
+  const hostStoreAssignment = draft.host.stores.find(s => s.storeId === ctx.storeId)
+  if (!draft.host.isActive || !hostStoreAssignment?.isActive) {
+    conflicts.push({
+      type: ConflictType.HOST_INVALID,
+      message: `主持人 "${draft.host.name}" 不存在、已禁用或未分配到该门店`,
+      details: { hostId: draft.hostId, hostName: draft.host.name },
+    })
+  }
+
+  if (draft.room.storeId !== ctx.storeId || !draft.room.isActive) {
+    conflicts.push({
+      type: ConflictType.ROOM_INVALID,
+      message: `房间 "${draft.room.name}" 不存在、已禁用或不属于该门店`,
+      details: { roomId: draft.roomId, roomName: draft.room.name },
+    })
+  }
+
+  if (draft.endTime <= draft.startTime) {
+    conflicts.push({
+      type: ConflictType.TIME_INVALID,
+      message: '结束时间必须晚于开始时间',
+      details: { startTime: draft.startTime, endTime: draft.endTime },
+    })
+  }
+
+  if (draft.maxPlayers < draft.script.minPlayers || draft.maxPlayers > draft.script.maxPlayers) {
+    conflicts.push({
+      type: ConflictType.PLAYER_COUNT_INVALID,
+      message: `场次人数必须在剧本人数范围内 (${draft.script.minPlayers}-${draft.script.maxPlayers})`,
+      details: {
+        maxPlayers: draft.maxPlayers,
+        scriptMinPlayers: draft.script.minPlayers,
+        scriptMaxPlayers: draft.script.maxPlayers,
+      },
+    })
+  }
+
+  if (draft.maxPlayers > draft.room.capacity) {
+    conflicts.push({
+      type: ConflictType.ROOM_CAPACITY_EXCEEDED,
+      message: `场次人数不能超过房间容量 ${draft.room.capacity}`,
+      details: { maxPlayers: draft.maxPlayers, roomCapacity: draft.room.capacity },
+    })
+  }
+
+  const proficiency = draft.host.proficiencies.find(p => p.scriptId === draft.scriptId)
+  if (!proficiency) {
+    conflicts.push({
+      type: ConflictType.PROFICIENCY_INSUFFICIENT,
+      message: `主持人 "${draft.host.name}" 没有剧本 "${draft.script.name}" 的主持熟练度`,
+      details: { hostId: draft.hostId, scriptId: draft.scriptId },
+    })
+  }
+
+  const isRestDay = draft.host.restDays.some(rd => isSameDay(rd.restDate, draft.startTime))
+  if (isRestDay) {
+    conflicts.push({
+      type: ConflictType.HOST_REST_DAY,
+      message: `主持人 "${draft.host.name}" ${draft.startTime.toLocaleDateString()} 为休息日`,
+      details: { hostId: draft.hostId, date: draft.startTime },
+    })
+  }
+
+  if (draft.host.maxDailySessions !== null) {
+    const dateKey = `${draft.hostId}-${normalizeDate(draft.startTime).toISOString()}`
+    const currentCount = hostDailySessionCounts.get(dateKey) || 0
+    const existingSameDaySessions = ctx.existingSessions.filter(
+      s => s.hostId === draft.hostId && isSameDay(s.startTime, draft.startTime)
+    ).length
+    const draftSameDaySessions = allDrafts.filter(
+      d => d.hostId === draft.hostId && isSameDay(d.startTime, draft.startTime) && d.id <= draft.id
+    ).length
+    const totalCount = existingSameDaySessions + draftSameDaySessions + 1
+    if (totalCount > draft.host.maxDailySessions) {
+      conflicts.push({
+        type: ConflictType.DAILY_SESSION_LIMIT_EXCEEDED,
+        message: `主持人 "${draft.host.name}" 当日场次已达上限 (${draft.host.maxDailySessions}场)`,
+        details: {
+          hostId: draft.hostId,
+          date: draft.startTime,
+          maxDailySessions: draft.host.maxDailySessions,
+          currentCount,
+        },
+      })
+    }
+  }
+
+  const overlappingUnassignable = draft.room.unassignableSlots.find(slot =>
+    hasTimeOverlap(draft.startTime, draft.endTime, slot.startTime, slot.endTime)
+  )
+  if (overlappingUnassignable) {
+    conflicts.push({
+      type: ConflictType.ROOM_UNASSIGNABLE_SLOT,
+      message: `房间 "${draft.room.name}" 在该时间段不可用：${overlappingUnassignable.reason}`,
+      details: {
+        roomId: draft.roomId,
+        unassignableSlot: {
+          startTime: overlappingUnassignable.startTime,
+          endTime: overlappingUnassignable.endTime,
+          reason: overlappingUnassignable.reason,
+        },
+      },
+    })
+  }
+
+  const overlappingHostSessions = ctx.existingSessions.filter(
+    s => s.hostId === draft.hostId &&
+      s.status !== SessionStatus.CANCELLED &&
+      s.status !== SessionStatus.COMPLETED &&
+      hasTimeOverlap(draft.startTime, draft.endTime, s.startTime, s.endTime)
+  )
+  if (overlappingHostSessions.length > 0) {
+    const conflictInfo = overlappingHostSessions.map(s =>
+      `场次ID: ${s.id}, 时间: ${s.startTime.toLocaleString()} - ${s.endTime.toLocaleString()}`
+    ).join('; ')
+    conflicts.push({
+      type: ConflictType.SESSION_CONFLICT_HOST,
+      message: `主持人 "${draft.host.name}" 与已有正式场次冲突：${conflictInfo}`,
+      details: { hostId: draft.hostId, overlappingSessions: overlappingHostSessions.map(s => s.id) },
+    })
+  }
+
+  const overlappingRoomSessions = ctx.existingSessions.filter(
+    s => s.roomId === draft.roomId &&
+      s.status !== SessionStatus.CANCELLED &&
+      s.status !== SessionStatus.COMPLETED &&
+      hasTimeOverlap(draft.startTime, draft.endTime, s.startTime, s.endTime)
+  )
+  if (overlappingRoomSessions.length > 0) {
+    const conflictInfo = overlappingRoomSessions.map(s =>
+      `场次ID: ${s.id}, 时间: ${s.startTime.toLocaleString()} - ${s.endTime.toLocaleString()}`
+    ).join('; ')
+    conflicts.push({
+      type: ConflictType.SESSION_CONFLICT_ROOM,
+      message: `房间 "${draft.room.name}" 与已有正式场次冲突：${conflictInfo}`,
+      details: { roomId: draft.roomId, overlappingSessions: overlappingRoomSessions.map(s => s.id) },
+    })
+  }
+
+  for (const otherDraft of allDrafts) {
+    if (otherDraft.id >= draft.id) continue
+    if (!hasTimeOverlap(draft.startTime, draft.endTime, otherDraft.startTime, otherDraft.endTime)) continue
+
+    if (otherDraft.hostId === draft.hostId) {
+      conflicts.push({
+        type: ConflictType.DRAFT_INTERNAL_CONFLICT_HOST,
+        message: `与草案场次 ${otherDraft.id} 主持人冲突 (${otherDraft.startTime.toLocaleString()} - ${otherDraft.endTime.toLocaleString()})`,
+        details: {
+          conflictingDraftId: otherDraft.id,
+          hostId: draft.hostId,
+        },
+      })
+    }
+
+    if (otherDraft.roomId === draft.roomId) {
+      conflicts.push({
+        type: ConflictType.DRAFT_INTERNAL_CONFLICT_ROOM,
+        message: `与草案场次 ${otherDraft.id} 房间冲突 (${otherDraft.startTime.toLocaleString()} - ${otherDraft.endTime.toLocaleString()})`,
+        details: {
+          conflictingDraftId: otherDraft.id,
+          roomId: draft.roomId,
+        },
+      })
+    }
+  }
+
+  return conflicts
+}
+
+export const validateSchedulePlanForPublish = async (planId: number): Promise<PublishValidationResult> => {
+  const plan = await prisma.schedulePlan.findUnique({
+    where: { id: planId },
+    include: {
+      draftSessions: {
+        include: {
+          script: true,
+          host: {
+            include: {
+              proficiencies: true,
+              restDays: true,
+              stores: true,
+            },
+          },
+          room: {
+            include: {
+              unassignableSlots: { where: { schedulePlanId: planId } },
+            },
+          },
+        },
+        orderBy: { id: 'asc' },
+      },
+      store: true,
+      unassignableSlots: true,
+    },
+  })
+
+  if (!plan) {
+    throw new AppError('排班方案不存在', 404)
+  }
+
+  if (plan.status !== 'DRAFT') {
+    throw new AppError(`排班方案状态为 ${plan.status}，无法发布`, 400)
+  }
+
+  if (plan.draftSessions.length === 0) {
+    throw new AppError('排班方案没有场次草案，无法发布', 400)
+  }
+
+  const store = plan.store
+  if (!store.isActive) {
+    throw new AppError('门店已被禁用', 400)
+  }
+
+  const minDate = plan.draftSessions.reduce((min, d) => d.startTime < min ? d.startTime : min, plan.draftSessions[0].startTime)
+  const maxDate = plan.draftSessions.reduce((max, d) => d.endTime > max ? d.endTime : max, plan.draftSessions[0].endTime)
+
+  const [existingSessions, allProficiencies, allRestDays] = await Promise.all([
+    prisma.session.findMany({
+      where: {
+        storeId: plan.storeId,
+        status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
+        startTime: { gte: minDate },
+        endTime: { lte: maxDate },
+      },
+    }),
+    prisma.hostProficiency.findMany({
+      where: {
+        host: { stores: { some: { storeId: plan.storeId, isActive: true } } },
+      },
+    }),
+    prisma.hostRestDay.findMany({
+      where: {
+        host: { stores: { some: { storeId: plan.storeId, isActive: true } } },
+        restDate: { gte: minDate, lte: maxDate },
+      },
+    }),
+  ])
+
+  const ctx: ValidationContext = {
+    storeId: plan.storeId,
+    existingSessions,
+    allProficiencies,
+    allRestDays,
+    allUnassignableSlots: plan.unassignableSlots,
+  }
+
+  const drafts = plan.draftSessions as unknown as DraftSessionWithRelations[]
+  const hostDailySessionCounts = new Map<string, number>()
+
+  const conflicts: DraftConflict[] = []
+  let totalConflictCount = 0
+
+  for (const draft of drafts) {
+    const draftConflicts = validateSingleDraft(draft, ctx, drafts, hostDailySessionCounts)
+    if (draftConflicts.length > 0) {
+      totalConflictCount += draftConflicts.length
+      conflicts.push({
+        draftId: draft.id,
+        draftInfo: {
+          scriptName: draft.script.name,
+          hostName: draft.host.name,
+          roomName: draft.room.name,
+          startTime: draft.startTime,
+          endTime: draft.endTime,
+        },
+        conflicts: draftConflicts,
+      })
+    }
+  }
+
+  return {
+    isValid: conflicts.length === 0,
+    conflicts,
+    totalConflictCount,
+  }
+}
+
+export interface PublishResult {
+  planId: number
+  planName: string
+  status: string
+  createdSessionCount: number
+  createdSessions: Array<{
+    id: number
+    scriptName: string
+    hostName: string
+    roomName: string
+    startTime: Date
+    endTime: Date
+    price: Decimal
+  }>
+}
+
+export const publishSchedulePlan = async (planId: number, operator?: string): Promise<PublishResult> => {
+  const validationResult = await validateSchedulePlanForPublish(planId)
+
+  if (!validationResult.isValid) {
+    throw new AppError(
+      `发布失败，共发现 ${validationResult.totalConflictCount} 个冲突，请先处理后再发布`,
+      409,
+      {
+        validationResult,
+      },
+    )
+  }
+
+  const plan = await prisma.schedulePlan.findUnique({
+    where: { id: planId },
+    include: {
+      draftSessions: {
+        orderBy: { startTime: 'asc' },
+      },
+    },
+  })
+
+  if (!plan) {
+    throw new AppError('排班方案不存在', 404)
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const createdSessions: PublishResult['createdSessions'] = []
+    const occupiedSlots: { hostId: number; roomId: number; startTime: Date; endTime: Date }[] = []
+
+    for (const draft of plan.draftSessions) {
+      const [script, host, room] = await Promise.all([
+        tx.script.findUnique({ where: { id: draft.scriptId } }),
+        tx.host.findUnique({
+          where: { id: draft.hostId },
+          include: { stores: { where: { storeId: plan.storeId } } },
+        }),
+        tx.room.findUnique({ where: { id: draft.roomId } }),
+      ])
+
+      if (!script || !host || !room) {
+        throw new AppError('关联数据不存在，请重新校验', 400)
+      }
+
+      for (const slot of occupiedSlots) {
+        if (hasTimeOverlap(draft.startTime, draft.endTime, slot.startTime, slot.endTime)) {
+          if (draft.hostId === slot.hostId) {
+            throw new AppError(
+              `草案场次 ${draft.id} 与本方案已创建场次主持人冲突`, 409,
+            )
+          }
+          if (draft.roomId === slot.roomId) {
+            throw new AppError(
+              `草案场次 ${draft.id} 与本方案已创建场次房间冲突`, 409,
+            )
+          }
+        }
+      }
+
+      try {
+        await checkHostConflict(draft.hostId, draft.startTime, draft.endTime)
+        await checkRoomConflict(draft.roomId, draft.startTime, draft.endTime)
+      } catch (error) {
+        if (error instanceof AppError) {
+          throw new AppError(`草案场次 ${draft.id} 发布失败：${error.message}`, error.statusCode)
+        }
+        throw error
+      }
+
+      const session = await tx.session.create({
+        data: {
+          storeId: plan.storeId,
+          scriptId: draft.scriptId,
+          hostId: draft.hostId,
+          roomId: draft.roomId,
+          startTime: draft.startTime,
+          endTime: draft.endTime,
+          price: draft.price,
+          maxPlayers: draft.maxPlayers,
+          remark: draft.remark,
+          status: SessionStatus.PENDING,
+          currentPlayers: 0,
+        },
+        include: {
+          script: { select: { name: true } },
+          host: { select: { name: true } },
+          room: { select: { name: true } },
+        },
+      })
+
+      occupiedSlots.push({
+        hostId: draft.hostId,
+        roomId: draft.roomId,
+        startTime: draft.startTime,
+        endTime: draft.endTime,
+      })
+
+      createdSessions.push({
+        id: session.id,
+        scriptName: session.script.name,
+        hostName: session.host.name,
+        roomName: session.room.name,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        price: session.price,
+      })
+    }
+
+    await tx.schedulePlan.update({
+      where: { id: planId },
+      data: { status: 'CONFIRMED' },
+    })
+
+    return {
+      planId: plan.id,
+      planName: plan.name,
+      status: 'CONFIRMED',
+      createdSessionCount: createdSessions.length,
+      createdSessions,
+    }
+  })
+
+  return result
 }

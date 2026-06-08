@@ -11,7 +11,7 @@ declare global {
   namespace Express {
     interface Response {
       sendSuccess: <T>(data?: T, message?: string) => Response
-      sendError: (message: string, statusCode?: number) => Response
+      sendError: (message: string, statusCode?: number, data?: unknown) => Response
     }
   }
 }
@@ -27,10 +27,11 @@ export const responseMiddleware = (req: Request, res: Response, next: NextFuncti
     return res.json(response)
   }
 
-  res.sendError = (message: string, statusCode = 400) => {
+  res.sendError = (message: string, statusCode = 400, data?: unknown) => {
     const response: ApiResponse = {
       success: false,
       message,
+      data,
       timestamp: Date.now(),
     }
     return res.status(statusCode).json(response)

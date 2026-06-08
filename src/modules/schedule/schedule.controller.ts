@@ -8,6 +8,8 @@ import {
   createSchedulePlanWithDrafts,
   confirmSchedulePlan,
   deleteSchedulePlan,
+  validateSchedulePlanForPublish,
+  publishSchedulePlan,
 } from './schedule.service'
 import {
   generateScheduleSchema,
@@ -58,6 +60,18 @@ type DeleteDraftSessionRequest = TypedRequest<
   { planId: number; draftId: number },
   Record<string, never>,
   Record<string, never>
+>
+
+type ValidatePublishRequest = TypedRequest<
+  InferSchemaType<typeof idParamSchema>,
+  Record<string, never>,
+  Record<string, never>
+>
+
+type PublishSchedulePlanRequest = TypedRequest<
+  InferSchemaType<typeof idParamSchema>,
+  Record<string, never>,
+  InferSchemaType<typeof confirmScheduleSchema>
 >
 
 const DEFAULT_STORE_ID = 1
@@ -369,6 +383,39 @@ export const deleteDraftSession = async (req: DeleteDraftSessionRequest, res: Re
     })
 
     res.sendSuccess(null, '草案场次删除成功')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const validateForPublish = async (req: ValidatePublishRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params
+
+    const result = await validateSchedulePlanForPublish(id)
+
+    if (result.isValid) {
+      res.sendSuccess(result, '排班方案校验通过，可以发布')
+    } else {
+      res.sendError(
+        `校验发现 ${result.totalConflictCount} 个冲突，请处理后再发布`,
+        409,
+        result
+      )
+    }
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const publishPlan = async (req: PublishSchedulePlanRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params
+    const { operator } = req.body
+
+    const result = await publishSchedulePlan(id, operator)
+
+    res.sendSuccess(result, `排班方案发布成功，共创建 ${result.createdSessionCount} 个正式场次`)
   } catch (error) {
     next(error)
   }

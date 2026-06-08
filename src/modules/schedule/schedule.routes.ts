@@ -8,6 +8,8 @@ import {
   deletePlan,
   updateDraftSession,
   deleteDraftSession,
+  validateForPublish,
+  publishPlan,
 } from './schedule.controller'
 import { validateBody, validateQuery, validateParams } from '../../middleware/validate'
 import {
@@ -31,6 +33,8 @@ router.get('/', validateQuery(schedulePlanQuerySchema), typedHandler(getSchedule
 router.get('/:id', validateParams(idParamSchema), typedHandler(getSchedulePlanById))
 router.post('/:id/confirm', validateParams(idParamSchema), validateBody(confirmScheduleSchema), typedHandler(confirmPlan))
 router.delete('/:id', validateParams(idParamSchema), typedHandler(deletePlan))
+router.get('/:id/validate-publish', validateParams(idParamSchema), typedHandler(validateForPublish))
+router.post('/:id/publish', validateParams(idParamSchema), validateBody(confirmScheduleSchema), typedHandler(publishPlan))
 
 router.put(
   '/:planId/drafts/:draftId',
