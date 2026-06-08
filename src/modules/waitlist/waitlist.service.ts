@@ -198,7 +198,6 @@ const confirmWaitlistToBookingInternal = async (
         name: waitlist.customer.name ?? '',
         phone: waitlist.customer.phone,
       },
-      templateCode: 'WAITLIST_CONFIRMED',
       templateParams,
       storeId: sessionWithDetails.storeId,
       relatedBookingId: booking.id,

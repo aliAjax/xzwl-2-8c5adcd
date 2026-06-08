@@ -13,7 +13,7 @@ import {
   idParamSchema,
   detailQuerySchema,
 } from '../../common/schemas'
-import { tryCreateNotificationForEventSafe } from '../notification/notification.service'
+import { tryCreateNotificationForEventIsolated } from '../notification/notification.service'
 import { SessionCancelledParams } from '../notification/types'
 
 type CreateSessionRequest = TypedRequest<
@@ -571,14 +571,13 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
 
         for (const booking of result.cancelledBookings.bookings) {
           if (booking.customer) {
-            await tryCreateNotificationForEventSafe(
+            await tryCreateNotificationForEventIsolated(
               { type: 'SESSION_CANCELLED', sessionId: id, entityType: 'booking', entityId: booking.id },
               {
                 recipient: {
                   name: booking.customer.name,
                   phone: booking.customer.phone
                 },
-                templateCode: 'SESSION_CANCELLED',
                 templateParams,
                 storeId: sessionWithDetails.storeId,
                 relatedBookingId: booking.id,
@@ -591,14 +590,13 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
 
         for (const waitlist of result.expiredWaitlists.waitlists) {
           if (waitlist.customer) {
-            await tryCreateNotificationForEventSafe(
+            await tryCreateNotificationForEventIsolated(
               { type: 'SESSION_CANCELLED', sessionId: id, entityType: 'waitlist', entityId: waitlist.id },
               {
                 recipient: {
                   name: waitlist.customer.name,
                   phone: waitlist.customer.phone
                 },
-                templateCode: 'SESSION_CANCELLED',
                 templateParams,
                 storeId: sessionWithDetails.storeId,
                 relatedSessionId: id,

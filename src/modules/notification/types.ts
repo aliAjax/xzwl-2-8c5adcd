@@ -6,6 +6,34 @@ export type NotificationBusinessEvent =
   | { type: 'WAITLIST_CONFIRMED'; waitlistId: number }
   | { type: 'MEMBERSHIP_BALANCE_CHANGE'; transactionId: number }
 
+export type EventType = NotificationBusinessEvent['type']
+
+export type NotificationEventParamsMap = {
+  SESSION_START_REMINDER: Omit<SessionStartReminderParams, 'storeName'>
+  SESSION_CANCELLED: Omit<SessionCancelledParams, 'storeName'>
+  WAITLIST_CONFIRMED: Omit<WaitlistConfirmedParams, 'storeName'>
+  MEMBERSHIP_BALANCE_CHANGE: Omit<MembershipBalanceChangeParams, 'storeName'>
+}
+
+export type NotificationEventMetadata = {
+  templateCode: string
+  notificationType: NotificationType
+  defaultChannel: NotificationChannel
+  defaultMaxSendCount: number
+}
+
+export type NotificationEventContext<T extends EventType = EventType> = {
+  recipient: RecipientSnapshot
+  templateParams: NotificationEventParamsMap[T]
+  storeId?: number
+  relatedBookingId?: number
+  relatedSessionId?: number
+  relatedCustomerId?: number
+  relatedTransactionId?: number
+  maxSendCount?: number
+  channel?: NotificationChannel
+}
+
 export interface RecipientSnapshot {
   name: string
   phone: string
@@ -95,18 +123,7 @@ export interface NotificationTaskCreateData {
   relatedTransactionId?: number
 }
 
-export interface NotificationEventContext {
-  recipient: RecipientSnapshot
-  templateParams: Omit<NotificationTemplateParams, 'storeName'>
-  templateCode: string
-  storeId?: number
-  relatedBookingId?: number
-  relatedSessionId?: number
-  relatedCustomerId?: number
-  relatedTransactionId?: number
-  maxSendCount?: number
-  channel?: NotificationChannel
-}
+
 
 export interface NotificationTaskFilter {
   type?: NotificationType

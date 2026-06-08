@@ -23,7 +23,7 @@ import {
 } from './booking.service'
 import { processPendingWaitlists, WaitlistProcessResult } from '../waitlist/waitlist.service'
 import { consume as membershipConsume } from '../membership/membership.service'
-import { tryCreateNotificationForEventSafe } from '../notification/notification.service'
+import { tryCreateNotificationForEventIsolated } from '../notification/notification.service'
 import { SessionStartReminderParams, SessionCancelledParams } from '../notification/types'
 
 const enrichBookingWithMembership = <T extends { customer?: any }>(booking: T): T & { membershipAccount?: MembershipAccountInfo | null } => {
@@ -136,14 +136,13 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
         playerCount: bookingWithDetails.playerCount,
       }
 
-      await tryCreateNotificationForEventSafe(
+      await tryCreateNotificationForEventIsolated(
         { type: 'SESSION_START_REMINDER', bookingId: result.booking.id },
         {
           recipient: {
             name: bookingWithDetails.customer.name,
             phone: bookingWithDetails.customer.phone
           },
-          templateCode: 'SESSION_START_REMINDER',
           templateParams,
           storeId: bookingWithDetails.session.storeId,
           relatedBookingId: result.booking.id,
@@ -384,14 +383,13 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
           startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
         }
 
-        await tryCreateNotificationForEventSafe(
+        await tryCreateNotificationForEventIsolated(
           { type: 'SESSION_CANCELLED', sessionId: bookingWithDetails.session.id, entityType: 'booking', entityId: id },
           {
             recipient: {
               name: bookingWithDetails.customer.name,
               phone: bookingWithDetails.customer.phone
             },
-            templateCode: 'SESSION_CANCELLED',
             templateParams,
             storeId: bookingWithDetails.session.storeId,
             relatedBookingId: id,
@@ -478,14 +476,13 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
         startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
       }
 
-      await tryCreateNotificationForEventSafe(
+      await tryCreateNotificationForEventIsolated(
         { type: 'SESSION_CANCELLED', sessionId: bookingWithDetails.session.id, entityType: 'booking', entityId: id },
         {
           recipient: {
             name: bookingWithDetails.customer.name,
             phone: bookingWithDetails.customer.phone
           },
-          templateCode: 'SESSION_CANCELLED',
           templateParams,
           storeId: bookingWithDetails.session.storeId,
           relatedBookingId: id,

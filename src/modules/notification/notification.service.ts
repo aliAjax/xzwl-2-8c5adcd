@@ -8,7 +8,9 @@ import {
   NotificationTaskWithRelations,
   NotificationTemplateParams,
   NotificationBusinessEvent,
-  NotificationEventContext
+  NotificationEventContext,
+  NotificationEventMetadata,
+  EventType
 } from './types'
 import { renderTemplate } from './templates'
 import { getNotificationSender } from './adapter'
@@ -343,6 +345,33 @@ export const cancelNotificationTask = async (
   return updatedTask as NotificationTaskWithRelations
 }
 
+const NOTIFICATION_EVENT_METADATA: Record<EventType, NotificationEventMetadata> = {
+  SESSION_START_REMINDER: {
+    templateCode: 'SESSION_START_REMINDER',
+    notificationType: NotificationType.SESSION_START_REMINDER,
+    defaultChannel: NotificationChannel.SMS,
+    defaultMaxSendCount: 3
+  },
+  SESSION_CANCELLED: {
+    templateCode: 'SESSION_CANCELLED',
+    notificationType: NotificationType.SESSION_CANCELLED,
+    defaultChannel: NotificationChannel.SMS,
+    defaultMaxSendCount: 3
+  },
+  WAITLIST_CONFIRMED: {
+    templateCode: 'WAITLIST_CONFIRMED',
+    notificationType: NotificationType.WAITLIST_CONFIRMED,
+    defaultChannel: NotificationChannel.SMS,
+    defaultMaxSendCount: 3
+  },
+  MEMBERSHIP_BALANCE_CHANGE: {
+    templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
+    notificationType: NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+    defaultChannel: NotificationChannel.SMS,
+    defaultMaxSendCount: 3
+  }
+}
+
 export const buildIdempotencyKeyFromEvent = (
   event: NotificationBusinessEvent
 ): string => {
@@ -361,17 +390,8 @@ export const buildIdempotencyKeyFromEvent = (
   }
 }
 
-const getNotificationTypeFromEvent = (event: NotificationBusinessEvent): NotificationType => {
-  switch (event.type) {
-    case 'SESSION_START_REMINDER':
-      return NotificationType.SESSION_START_REMINDER
-    case 'SESSION_CANCELLED':
-      return NotificationType.SESSION_CANCELLED
-    case 'WAITLIST_CONFIRMED':
-      return NotificationType.WAITLIST_CONFIRMED
-    case 'MEMBERSHIP_BALANCE_CHANGE':
-      return NotificationType.MEMBERSHIP_BALANCE_CHANGE
-  }
+const getEventMetadata = (eventType: EventType): NotificationEventMetadata => {
+  return NOTIFICATION_EVENT_METADATA[eventType]
 }
 
 const getStoreName = async (
@@ -386,13 +406,13 @@ const getStoreName = async (
   return store?.name
 }
 
-export const createNotificationForEvent = async (
-  event: NotificationBusinessEvent,
-  context: NotificationEventContext,
+const executeCreateNotification = async <T extends EventType>(
+  event: NotificationBusinessEvent & { type: T },
+  context: NotificationEventContext<T>,
+  client: Prisma.TransactionClient | typeof prisma,
   tx?: Prisma.TransactionClient
 ): Promise<NotificationTaskWithRelations | null> => {
-  const client = tx || prisma
-  const type = getNotificationTypeFromEvent(event)
+  const metadata = getEventMetadata(event.type)
   const idempotencyKey = buildIdempotencyKeyFromEvent(event)
 
   const existingTask = await client.notificationTask.findUnique({
@@ -412,13 +432,13 @@ export const createNotificationForEvent = async (
   } as NotificationTemplateParams
 
   return createNotificationTask({
-    type,
-    channel: context.channel || NotificationChannel.SMS,
+    type: metadata.notificationType,
+    channel: context.channel || metadata.defaultChannel,
     recipient: context.recipient,
-    templateCode: context.templateCode,
+    templateCode: metadata.templateCode,
     templateParams,
     idempotencyKey,
-    maxSendCount: context.maxSendCount || 3,
+    maxSendCount: context.maxSendCount || metadata.defaultMaxSendCount,
     relatedBookingId: context.relatedBookingId,
     relatedSessionId: context.relatedSessionId,
     relatedCustomerId: context.relatedCustomerId,
@@ -426,9 +446,18 @@ export const createNotificationForEvent = async (
   }, tx)
 }
 
-export const tryCreateNotificationForEvent = async (
-  event: NotificationBusinessEvent,
-  context: NotificationEventContext,
+export const createNotificationForEvent = async <T extends EventType>(
+  event: NotificationBusinessEvent & { type: T },
+  context: NotificationEventContext<T>,
+  tx?: Prisma.TransactionClient
+): Promise<NotificationTaskWithRelations | null> => {
+  const client = tx || prisma
+  return executeCreateNotification(event, context, client, tx)
+}
+
+export const tryCreateNotificationForEvent = async <T extends EventType>(
+  event: NotificationBusinessEvent & { type: T },
+  context: NotificationEventContext<T>,
   tx?: Prisma.TransactionClient
 ): Promise<NotificationTaskWithRelations | null> => {
   try {
@@ -439,13 +468,35 @@ export const tryCreateNotificationForEvent = async (
   }
 }
 
-export const tryCreateNotificationForEventSafe = async (
-  event: NotificationBusinessEvent,
-  context: NotificationEventContext
+export const tryCreateNotificationForEventAsync = async <T extends EventType>(
+  event: NotificationBusinessEvent & { type: T },
+  context: NotificationEventContext<T>,
+  tx?: Prisma.TransactionClient
+): Promise<void> => {
+  try {
+    if (tx) {
+      await tryCreateNotificationForEvent(event, context, tx)
+    } else {
+      try {
+        await prisma.$transaction(async (nestedTx) => {
+          await executeCreateNotification(event, context, nestedTx, nestedTx)
+        })
+      } catch (nestedError) {
+        console.error(`[Notification] Transaction failed for event ${event.type}:`, nestedError)
+      }
+    }
+  } catch (error) {
+    console.error(`[Notification] Failed to create notification for event ${event.type}:`, error)
+  }
+}
+
+export const tryCreateNotificationForEventIsolated = async <T extends EventType>(
+  event: NotificationBusinessEvent & { type: T },
+  context: NotificationEventContext<T>
 ): Promise<NotificationTaskWithRelations | null> => {
   try {
-    return await prisma.$transaction(async (tx) => {
-      return await createNotificationForEvent(event, context, tx)
+    return await prisma.$transaction(async (isolatedTx) => {
+      return await executeCreateNotification(event, context, isolatedTx, isolatedTx)
     })
   } catch (error) {
     console.error(`[Notification] Failed to create notification for event ${event.type}:`, error)

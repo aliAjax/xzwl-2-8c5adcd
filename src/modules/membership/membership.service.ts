@@ -161,7 +161,6 @@ export const recharge = async (
       { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
       {
         recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
         templateParams,
         storeId,
         relatedCustomerId: account.customerId,
@@ -227,7 +226,6 @@ export const consume = async (
       { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
       {
         recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
         templateParams,
         storeId,
         relatedCustomerId: account.customerId,
@@ -290,7 +288,6 @@ export const refund = async (
       { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
       {
         recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
         templateParams,
         storeId,
         relatedCustomerId: account.customerId,
@@ -375,7 +372,6 @@ export const consumeWithBooking = async (
       { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
       {
         recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
         templateParams,
         storeId,
         relatedCustomerId: account.customerId,
