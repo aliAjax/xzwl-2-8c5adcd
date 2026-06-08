@@ -152,12 +152,14 @@ model Host {
   name          String
   phone         String            @unique
   avatar        String?
+  maxDailySessions Int?
   isActive      Boolean           @default(true)
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
   stores        HostStore[]
   sessions      Session[]
   proficiencies HostProficiency[]
+  restDays      HostRestDay[]
   draftSessions ScheduleDraftSession[]
 
   @@index([isActive])
@@ -176,18 +178,33 @@ model HostProficiency {
   @@index([scriptId])
 }
 
+model HostRestDay {
+  id        Int      @id @default(autoincrement())
+  hostId    Int
+  restDate  DateTime
+  remark    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  host      Host     @relation(fields: [hostId], references: [id], onDelete: Cascade)
+
+  @@unique([hostId, restDate])
+  @@index([hostId])
+  @@index([restDate])
+}
+
 model Room {
-  id         Int       @id @default(autoincrement())
-  storeId    Int
-  name       String
-  capacity   Int
-  isActive   Boolean   @default(true)
-  remark     String?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  store      Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  sessions   Session[]
-  draftSessions ScheduleDraftSession[]
+  id                Int                     @id @default(autoincrement())
+  storeId           Int
+  name              String
+  capacity          Int
+  isActive          Boolean                 @default(true)
+  remark            String?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  store             Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sessions          Session[]
+  draftSessions     ScheduleDraftSession[]
+  unassignableSlots ScheduleUnassignableSlot[]
 
   @@unique([storeId, name])
   @@index([storeId])
@@ -316,17 +333,18 @@ model Waitlist {
 }
 
 model SchedulePlan {
-  id             Int                  @id @default(autoincrement())
-  storeId        Int
-  name           String
-  startDate      DateTime
-  endDate        DateTime
-  status         SchedulePlanStatus   @default(DRAFT)
-  remark         String?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  store          Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  draftSessions  ScheduleDraftSession[]
+  id                Int                  @id @default(autoincrement())
+  storeId           Int
+  name              String
+  startDate         DateTime
+  endDate           DateTime
+  status            SchedulePlanStatus   @default(DRAFT)
+  remark            String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  store             Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  draftSessions     ScheduleDraftSession[]
+  unassignableSlots ScheduleUnassignableSlot[]
 
   @@index([storeId])
   @@index([status])
@@ -357,6 +375,23 @@ model ScheduleDraftSession {
   @@index([scriptId])
   @@index([hostId])
   @@index([roomId])
+}
+
+model ScheduleUnassignableSlot {
+  id             Int          @id @default(autoincrement())
+  schedulePlanId Int
+  roomId         Int
+  startTime      DateTime
+  endTime        DateTime
+  reason         String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  schedulePlan   SchedulePlan @relation(fields: [schedulePlanId], references: [id], onDelete: Cascade)
+  room           Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([schedulePlanId])
+  @@index([roomId])
+  @@index([startTime])
 }
 
 model StoreDailyClose {

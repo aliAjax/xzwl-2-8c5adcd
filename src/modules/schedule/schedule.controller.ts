@@ -67,7 +67,7 @@ export const generateSchedule = async (req: GenerateScheduleRequest, res: Respon
     const { storeId, startDate, endDate, name, remark, defaultPrice, sessionGapMinutes } = req.body
     const effectiveStoreId = storeId ?? DEFAULT_STORE_ID
 
-    const { draftCandidates } = await generateScheduleDrafts({
+    const { draftCandidates, unassignableSlots } = await generateScheduleDrafts({
       storeId: effectiveStoreId,
       startDate,
       endDate,
@@ -87,10 +87,16 @@ export const generateSchedule = async (req: GenerateScheduleRequest, res: Respon
         defaultPrice,
         sessionGapMinutes,
       },
-      draftCandidates
+      draftCandidates,
+      unassignableSlots
     )
 
-    res.sendSuccess(schedulePlan, `排班方案生成成功，共生成 ${draftCandidates.length} 个场次草案`)
+    const totalSlots = draftCandidates.length + (unassignableSlots?.length || 0)
+    const message = unassignableSlots && unassignableSlots.length > 0
+      ? `排班方案生成成功，共生成 ${draftCandidates.length} 个场次草案，有 ${unassignableSlots.length} 个时间段因约束无法安排`
+      : `排班方案生成成功，共生成 ${draftCandidates.length} 个场次草案`
+
+    res.sendSuccess(schedulePlan, message)
   } catch (error) {
     next(error)
   }
@@ -154,6 +160,12 @@ export const getSchedulePlanById = async (req: GetSchedulePlanByIdRequest, res: 
           include: {
             script: { select: { id: true, name: true, minPlayers: true, maxPlayers: true, durationMin: true, difficulty: true } },
             host: { select: { id: true, name: true, phone: true, avatar: true } },
+            room: { select: { id: true, name: true, capacity: true, remark: true } },
+          },
+          orderBy: { startTime: 'asc' },
+        },
+        unassignableSlots: {
+          include: {
             room: { select: { id: true, name: true, capacity: true, remark: true } },
           },
           orderBy: { startTime: 'asc' },

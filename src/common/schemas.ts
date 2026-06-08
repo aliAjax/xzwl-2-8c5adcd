@@ -115,6 +115,7 @@ export const hostSchema = z.object({
   name: z.string().min(1).max(50),
   phone: z.string().regex(/^1[3-9]\d{9}$/, { message: '请输入有效的手机号码' }),
   avatar: z.string().url().optional(),
+  maxDailySessions: z.coerce.number().int().positive().optional(),
   isActive: z.boolean().optional().default(true),
 })
 
@@ -122,6 +123,24 @@ export const hostUpdateSchema = hostSchema.partial().refine(
   data => Object.keys(data).length > 0,
   { message: '至少需要提供一个更新字段' }
 )
+
+export const hostRestDaySchema = z.object({
+  hostId: z.coerce.number().int().positive(),
+  restDate: z.coerce.date(),
+  remark: z.string().optional(),
+})
+
+export const hostRestDayBatchSchema = z.object({
+  hostId: z.coerce.number().int().positive(),
+  restDates: z.array(z.coerce.date()).min(1),
+  remark: z.string().optional(),
+})
+
+export const hostRestDayQuerySchema = z.object({
+  hostId: z.coerce.number().int().positive().optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+})
 
 export const roomSchema = z.object({
   storeId: z.coerce.number().int().positive().optional().default(1),

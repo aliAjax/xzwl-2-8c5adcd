@@ -11,6 +11,9 @@ import {
   idParamSchema,
   hostRecommendSchema,
   detailQuerySchema,
+  hostRestDaySchema,
+  hostRestDayBatchSchema,
+  hostRestDayQuerySchema,
 } from '../../common/schemas'
 
 type CreateHostRequest = TypedRequest<
@@ -483,6 +486,135 @@ export const deleteHost = async (req: GetHostByIdRequest, res: Response, next: N
     })
 
     res.sendSuccess(null, '主持人删除成功')
+  } catch (error) {
+    next(error)
+  }
+}
+
+type AddHostRestDayRequest = TypedRequest<
+  Record<string, never>,
+  Record<string, never>,
+  InferSchemaType<typeof hostRestDaySchema>
+>
+
+type AddHostRestDayBatchRequest = TypedRequest<
+  Record<string, never>,
+  Record<string, never>,
+  InferSchemaType<typeof hostRestDayBatchSchema>
+>
+
+type GetHostRestDaysRequest = TypedRequest<
+  Record<string, never>,
+  InferSchemaType<typeof hostRestDayQuerySchema>,
+  Record<string, never>
+>
+
+type DeleteHostRestDayRequest = TypedRequest<
+  InferSchemaType<typeof idParamSchema>,
+  Record<string, never>,
+  Record<string, never>
+>
+
+export const addHostRestDay = async (req: AddHostRestDayRequest, res: Response, next: NextFunction) => {
+  try {
+    const { hostId, restDate, remark } = req.body
+
+    const host = await prisma.host.findUnique({ where: { id: hostId } })
+    if (!host) {
+      throw new AppError('主持人不存在', 404)
+    }
+
+    const existing = await prisma.hostRestDay.findUnique({
+      where: { hostId_restDate: { hostId, restDate } },
+    })
+    if (existing) {
+      throw new AppError('该日期已设为休息日', 409)
+    }
+
+    const restDay = await prisma.hostRestDay.create({
+      data: { hostId, restDate, remark },
+    })
+
+    res.sendSuccess(restDay, '休息日添加成功')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const addHostRestDayBatch = async (req: AddHostRestDayBatchRequest, res: Response, next: NextFunction) => {
+  try {
+    const { hostId, restDates, remark } = req.body
+
+    const host = await prisma.host.findUnique({ where: { id: hostId } })
+    if (!host) {
+      throw new AppError('主持人不存在', 404)
+    }
+
+    const normalizedDates = restDates.map(date => {
+      const d = new Date(date)
+      d.setHours(0, 0, 0, 0)
+      return d
+    })
+
+    const result = await prisma.$transaction(async (tx) => {
+      const created = []
+      for (const restDate of normalizedDates) {
+        try {
+          const day = await tx.hostRestDay.create({
+            data: { hostId, restDate, remark },
+          })
+          created.push(day)
+        } catch (e) {
+          // 忽略唯一约束错误（已存在的日期）
+        }
+      }
+      return created
+    })
+
+    res.sendSuccess(result, `成功添加 ${result.length} 个休息日`)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getHostRestDays = async (req: GetHostRestDaysRequest, res: Response, next: NextFunction) => {
+  try {
+    const { hostId, startDate, endDate } = req.query
+
+    const where: Record<string, unknown> = {}
+    if (hostId !== undefined) where.hostId = hostId
+    if (startDate && endDate) {
+      where.restDate = { gte: startDate, lte: endDate }
+    } else if (startDate) {
+      where.restDate = { gte: startDate }
+    } else if (endDate) {
+      where.restDate = { lte: endDate }
+    }
+
+    const restDays = await prisma.hostRestDay.findMany({
+      where,
+      include: { host: { select: { id: true, name: true } } },
+      orderBy: { restDate: 'asc' },
+    })
+
+    res.sendSuccess(restDays)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const deleteHostRestDay = async (req: DeleteHostRestDayRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params
+
+    const restDay = await prisma.hostRestDay.findUnique({ where: { id } })
+    if (!restDay) {
+      throw new AppError('休息日记录不存在', 404)
+    }
+
+    await prisma.hostRestDay.delete({ where: { id } })
+
+    res.sendSuccess(null, '休息日删除成功')
   } catch (error) {
     next(error)
   }

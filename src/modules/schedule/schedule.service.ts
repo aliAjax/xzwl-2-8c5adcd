@@ -1,6 +1,6 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { ProficiencyLevel, SessionStatus } from '@prisma/client'
+import { ProficiencyLevel, SessionStatus, Host } from '@prisma/client'
 import { checkHostConflict, checkRoomConflict } from '../session/session.controller'
 import { Decimal } from '@prisma/client/runtime/library'
 
@@ -92,10 +92,66 @@ const getProficiencyLevel = (
   return prof?.level
 }
 
+interface HostWithConfig extends Host {
+  maxDailySessions: number | null
+}
+
+const normalizeDate = (date: Date): Date => {
+  const d = new Date(date)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+const getHostDailySessionCount = (
+  hostId: number,
+  date: Date,
+  occupiedSlots: OccupiedSlot[]
+): number => {
+  const normalizedDate = normalizeDate(date)
+  return occupiedSlots.filter(slot => {
+    if (slot.hostId !== hostId) return false
+    const slotDate = normalizeDate(slot.startTime)
+    return slotDate.getTime() === normalizedDate.getTime()
+  }).length
+}
+
+const isHostRestDay = (
+  hostId: number,
+  date: Date,
+  restDays: { hostId: number; restDate: Date }[]
+): boolean => {
+  const normalizedDate = normalizeDate(date)
+  return restDays.some(rd => {
+    if (rd.hostId !== hostId) return false
+    const rdDate = normalizeDate(rd.restDate)
+    return rdDate.getTime() === normalizedDate.getTime()
+  })
+}
+
+const checkHostConstraint = (
+  host: HostWithConfig,
+  date: Date,
+  occupiedSlots: OccupiedSlot[],
+  restDays: { hostId: number; restDate: Date }[]
+): string | null => {
+  if (isHostRestDay(host.id, date, restDays)) {
+    return `主持人 ${host.name} 当日为休息日`
+  }
+
+  if (host.maxDailySessions !== null) {
+    const currentCount = getHostDailySessionCount(host.id, date, occupiedSlots)
+    if (currentCount >= host.maxDailySessions) {
+      return `主持人 ${host.name} 当日场次已达上限 (${host.maxDailySessions}场)`
+    }
+  }
+
+  return null
+}
+
 export const generateScheduleDrafts = async (params: GenerateScheduleParams) => {
   const { storeId, startDate, endDate, name, remark, defaultPrice = 128, sessionGapMinutes = 30 } = params
 
-  const [store, scripts, rooms, hostStores, existingSessions, proficiencies] = await Promise.all([
+  const [store, scripts, rooms, hostStores, existingSessions, proficiencies, restDays] = await Promise.all([
     prisma.store.findUnique({
       where: { id: storeId, isActive: true },
     }),
@@ -126,6 +182,13 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
         script: { storeId, isActive: true },
       },
     }),
+    prisma.hostRestDay.findMany({
+      where: {
+        host: { stores: { some: { storeId, isActive: true } } },
+        restDate: { gte: startDate, lte: endDate },
+      },
+      select: { hostId: true, restDate: true },
+    }),
   ])
 
   if (!store) {
@@ -144,9 +207,13 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
   const { hour: startHour, minute: startMinute } = parseTimeString(store.businessStartTime || '10:00')
   const { hour: endHour, minute: endMinute } = parseTimeString(store.businessEndTime || '23:00')
 
-  const hosts = hostStores.map(hs => hs.host)
+  const hosts: HostWithConfig[] = hostStores.map(hs => ({
+    ...hs.host,
+    maxDailySessions: hs.host.maxDailySessions,
+  }))
   const occupiedSlots: OccupiedSlot[] = [...existingSessions]
   const draftCandidates: DraftSessionCandidate[] = []
+  const unassignableSlots: { startTime: Date; endTime: Date; roomId: number; reason: string }[] = []
 
   const currentDate = new Date(startDate)
   const endDateObj = new Date(endDate)
@@ -167,6 +234,7 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
 
         let bestCandidate: DraftSessionCandidate | null = null
         let bestScore = -1
+        let constraintViolations: string[] = []
 
         for (const script of suitableScripts) {
           const sessionEndTime = new Date(dayStartTime.getTime() + script.durationMin * 60 * 1000)
@@ -185,6 +253,14 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
           }
 
           for (const host of availableHosts) {
+            const constraintError = checkHostConstraint(host, currentDate, occupiedSlots, restDays)
+            if (constraintError) {
+              if (!constraintViolations.includes(constraintError)) {
+                constraintViolations.push(constraintError)
+              }
+              continue
+            }
+
             const profLevel = getProficiencyLevel(proficiencies, host.id, script.id)!
             const maxPlayers = Math.min(script.maxPlayers, room.capacity)
             const price = new Decimal(defaultPrice)
@@ -192,7 +268,10 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
             const hostConflict = await checkConflictSilent('host', host.id, dayStartTime, sessionEndTime, occupiedSlots)
             const roomConflict = await checkConflictSilent('room', room.id, dayStartTime, sessionEndTime, occupiedSlots)
 
-            const conflictInfo = [hostConflict, roomConflict].filter(Boolean).join('; ') || undefined
+            const conflictParts: string[] = []
+            if (hostConflict) conflictParts.push(hostConflict)
+            if (roomConflict) conflictParts.push(roomConflict)
+            const conflictInfo = conflictParts.length > 0 ? conflictParts.join('; ') : undefined
 
             const proficiencyScore = proficiencyPriority[profLevel] * 10
             const roomFitScore = Math.floor((maxPlayers / room.capacity) * 10)
@@ -230,7 +309,17 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
           draftCandidates.push(bestCandidate)
           dayStartTime = new Date(bestCandidate.endTime.getTime() + sessionGapMinutes * 60 * 1000)
         } else {
-          dayStartTime = new Date(dayStartTime.getTime() + 30 * 60 * 1000)
+          const slotEndTime = new Date(dayStartTime.getTime() + 30 * 60 * 1000)
+          const reason = constraintViolations.length > 0
+            ? constraintViolations.join('; ')
+            : '无合适主持人或剧本'
+          unassignableSlots.push({
+            startTime: new Date(dayStartTime),
+            endTime: slotEndTime,
+            roomId: room.id,
+            reason,
+          })
+          dayStartTime = slotEndTime
         }
       }
     }
@@ -244,12 +333,21 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
     rooms,
     hosts,
     draftCandidates,
+    unassignableSlots,
   }
+}
+
+interface UnassignableSlot {
+  startTime: Date
+  endTime: Date
+  roomId: number
+  reason: string
 }
 
 export const createSchedulePlanWithDrafts = async (
   params: GenerateScheduleParams,
-  candidates: DraftSessionCandidate[]
+  candidates: DraftSessionCandidate[],
+  unassignableSlots: UnassignableSlot[] = []
 ) => {
   const { storeId, startDate, endDate, name, remark } = params
 
@@ -282,6 +380,18 @@ export const createSchedulePlanWithDrafts = async (
       })
     }
 
+    if (unassignableSlots.length > 0) {
+      await tx.scheduleUnassignableSlot.createMany({
+        data: unassignableSlots.map(slot => ({
+          schedulePlanId: schedulePlan.id,
+          roomId: slot.roomId,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          reason: slot.reason,
+        })),
+      })
+    }
+
     const fullPlan = await tx.schedulePlan.findUnique({
       where: { id: schedulePlan.id },
       include: {
@@ -290,6 +400,12 @@ export const createSchedulePlanWithDrafts = async (
           include: {
             script: { select: { id: true, name: true, minPlayers: true, maxPlayers: true, durationMin: true } },
             host: { select: { id: true, name: true, phone: true } },
+            room: { select: { id: true, name: true, capacity: true } },
+          },
+          orderBy: { startTime: 'asc' },
+        },
+        unassignableSlots: {
+          include: {
             room: { select: { id: true, name: true, capacity: true } },
           },
           orderBy: { startTime: 'asc' },
