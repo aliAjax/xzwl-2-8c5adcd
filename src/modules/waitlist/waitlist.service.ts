@@ -177,40 +177,38 @@ const confirmWaitlistToBookingInternal = async (
     where: { id: waitlist.sessionId },
     include: { script: true, host: true, room: true, store: true },
   })
-  if (sessionWithDetails) {
-    try {
-      const templateParams: WaitlistConfirmedParams = {
-        waitlistId: waitlistId,
-        bookingId: booking.id,
-        scriptName: sessionWithDetails.script.name,
-        hostName: sessionWithDetails.host?.name || '',
-        roomName: sessionWithDetails.room?.name || '',
-        startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
-        playerCount: waitlist.playerCount,
-        storeName: sessionWithDetails.store?.name,
-      }
-      const idempotencyKey = generateIdempotencyKey(
-        NotificationType.WAITLIST_CONFIRMED,
-        `waitlist:${waitlistId}`
-      )
-      await createNotificationTask({
-        type: NotificationType.WAITLIST_CONFIRMED,
-        channel: NotificationChannel.SMS,
-        recipient: {
-          name: waitlist.customer.name ?? '',
-          phone: waitlist.customer.phone,
-        },
-        templateCode: 'WAITLIST_CONFIRMED',
-        templateParams,
-        idempotencyKey,
-        relatedBookingId: booking.id,
-        relatedSessionId: waitlist.sessionId,
-        relatedCustomerId: waitlist.customerId,
-      }, tx)
-    } catch (notificationError) {
-      console.error('Failed to create notification for waitlist confirmation:', notificationError)
-    }
+  if (!sessionWithDetails) {
+    throw new AppError('场次不存在', 404)
   }
+
+  const templateParams: WaitlistConfirmedParams = {
+    waitlistId: waitlistId,
+    bookingId: booking.id,
+    scriptName: sessionWithDetails.script.name,
+    hostName: sessionWithDetails.host?.name || '',
+    roomName: sessionWithDetails.room?.name || '',
+    startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
+    playerCount: waitlist.playerCount,
+    storeName: sessionWithDetails.store?.name,
+  }
+  const idempotencyKey = generateIdempotencyKey(
+    NotificationType.WAITLIST_CONFIRMED,
+    `waitlist:${waitlistId}`
+  )
+  await createNotificationTask({
+    type: NotificationType.WAITLIST_CONFIRMED,
+    channel: NotificationChannel.SMS,
+    recipient: {
+      name: waitlist.customer.name ?? '',
+      phone: waitlist.customer.phone,
+    },
+    templateCode: 'WAITLIST_CONFIRMED',
+    templateParams,
+    idempotencyKey,
+    relatedBookingId: booking.id,
+    relatedSessionId: waitlist.sessionId,
+    relatedCustomerId: waitlist.customerId,
+  }, tx)
 
   return { success: true, bookingId: booking.id, message: '候补转正成功' }
 }
@@ -337,31 +335,21 @@ export const processPendingWaitlists = async (
         continue
       }
 
-      try {
-        const result = await confirmWaitlistToBookingInternal(tx, waitlist.id)
-        if (result.success && result.bookingId) {
-          results.push({
-            waitlistId: waitlist.id,
-            bookingId: result.bookingId,
-            success: true,
-            message: result.message,
-          })
-        } else {
-          results.push({
-            waitlistId: waitlist.id,
-            success: false,
-            message: result.message,
-            skippedReason: 'CONFIRMATION_FAILED',
-          })
-        }
-      } catch (error) {
+      const result = await confirmWaitlistToBookingInternal(tx, waitlist.id)
+      if (result.success && result.bookingId) {
+        results.push({
+          waitlistId: waitlist.id,
+          bookingId: result.bookingId,
+          success: true,
+          message: result.message,
+        })
+      } else {
         results.push({
           waitlistId: waitlist.id,
           success: false,
-          message: error instanceof Error ? error.message : '处理失败',
-          skippedReason: 'ERROR',
+          message: result.message,
+          skippedReason: 'CONFIRMATION_FAILED',
         })
-        continue
       }
     }
   })
