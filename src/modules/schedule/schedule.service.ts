@@ -52,7 +52,8 @@ interface DraftSessionWithRelations extends ScheduleDraftSession {
 
 interface ValidationContext {
   storeId: number
-  existingSessions: Session[]
+  storeSessions: Session[]
+  crossStoreHostSessions: (Session & { script: { name: string }; store: { name: string } })[]
   allProficiencies: HostProficiency[]
   allRestDays: HostRestDay[]
   allUnassignableSlots: ScheduleUnassignableSlot[]
@@ -763,25 +764,26 @@ const validateSingleDraft = (
 
   if (draft.host.maxDailySessions !== null) {
     const dateKey = `${draft.hostId}-${normalizeDate(draft.startTime).toISOString()}`
-    const currentCount = hostDailySessionCounts.get(dateKey) || 0
-    const existingSameDaySessions = ctx.existingSessions.filter(
+    const existingSameDaySessions = ctx.storeSessions.filter(
       s => s.hostId === draft.hostId && isSameDay(s.startTime, draft.startTime)
     ).length
-    const draftSameDaySessions = allDrafts.filter(
-      d => d.hostId === draft.hostId && isSameDay(d.startTime, draft.startTime) && d.id <= draft.id
-    ).length
-    const totalCount = existingSameDaySessions + draftSameDaySessions + 1
+    const processedDraftCount = hostDailySessionCounts.get(dateKey) || 0
+    const totalCount = existingSameDaySessions + processedDraftCount + 1
     if (totalCount > draft.host.maxDailySessions) {
       conflicts.push({
         type: ConflictType.DAILY_SESSION_LIMIT_EXCEEDED,
-        message: `主持人 "${draft.host.name}" 当日场次已达上限 (${draft.host.maxDailySessions}场)`,
+        message: `主持人 "${draft.host.name}" 当日场次已达上限 (${draft.host.maxDailySessions}场)，当前已有 ${existingSameDaySessions + processedDraftCount} 场`,
         details: {
           hostId: draft.hostId,
           date: draft.startTime,
           maxDailySessions: draft.host.maxDailySessions,
-          currentCount,
+          existingSessionCount: existingSameDaySessions,
+          processedDraftCount: processedDraftCount,
+          totalWithCurrent: totalCount,
         },
       })
+    } else {
+      hostDailySessionCounts.set(dateKey, processedDraftCount + 1)
     }
   }
 
@@ -803,7 +805,7 @@ const validateSingleDraft = (
     })
   }
 
-  const overlappingHostSessions = ctx.existingSessions.filter(
+  const overlappingHostSessions = ctx.crossStoreHostSessions.filter(
     s => s.hostId === draft.hostId &&
       s.status !== SessionStatus.CANCELLED &&
       s.status !== SessionStatus.COMPLETED &&
@@ -811,16 +813,26 @@ const validateSingleDraft = (
   )
   if (overlappingHostSessions.length > 0) {
     const conflictInfo = overlappingHostSessions.map(s =>
-      `场次ID: ${s.id}, 时间: ${s.startTime.toLocaleString()} - ${s.endTime.toLocaleString()}`
+      `[${s.store.name}] ${s.script.name} (场次ID: ${s.id}, ${s.startTime.toLocaleString()} - ${s.endTime.toLocaleString()})`
     ).join('; ')
     conflicts.push({
       type: ConflictType.SESSION_CONFLICT_HOST,
-      message: `主持人 "${draft.host.name}" 与已有正式场次冲突：${conflictInfo}`,
-      details: { hostId: draft.hostId, overlappingSessions: overlappingHostSessions.map(s => s.id) },
+      message: `主持人 "${draft.host.name}" 与已有正式场次冲突（跨门店检测）：${conflictInfo}`,
+      details: {
+        hostId: draft.hostId,
+        overlappingSessions: overlappingHostSessions.map(s => ({
+          id: s.id,
+          storeId: s.storeId,
+          storeName: s.store.name,
+          scriptName: s.script.name,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        })),
+      },
     })
   }
 
-  const overlappingRoomSessions = ctx.existingSessions.filter(
+  const overlappingRoomSessions = ctx.storeSessions.filter(
     s => s.roomId === draft.roomId &&
       s.status !== SessionStatus.CANCELLED &&
       s.status !== SessionStatus.COMPLETED &&
@@ -833,7 +845,14 @@ const validateSingleDraft = (
     conflicts.push({
       type: ConflictType.SESSION_CONFLICT_ROOM,
       message: `房间 "${draft.room.name}" 与已有正式场次冲突：${conflictInfo}`,
-      details: { roomId: draft.roomId, overlappingSessions: overlappingRoomSessions.map(s => s.id) },
+      details: {
+        roomId: draft.roomId,
+        overlappingSessions: overlappingRoomSessions.map(s => ({
+          id: s.id,
+          startTime: s.startTime,
+          endTime: s.endTime,
+        })),
+      },
     })
   }
 
@@ -914,13 +933,28 @@ export const validateSchedulePlanForPublish = async (planId: number): Promise<Pu
   const minDate = plan.draftSessions.reduce((min, d) => d.startTime < min ? d.startTime : min, plan.draftSessions[0].startTime)
   const maxDate = plan.draftSessions.reduce((max, d) => d.endTime > max ? d.endTime : max, plan.draftSessions[0].endTime)
 
-  const [existingSessions, allProficiencies, allRestDays] = await Promise.all([
+  const hostIds = plan.draftSessions.map(ds => ds.hostId)
+
+  const [storeSessions, crossStoreHostSessions, allProficiencies, allRestDays] = await Promise.all([
     prisma.session.findMany({
       where: {
         storeId: plan.storeId,
         status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
         startTime: { gte: minDate },
         endTime: { lte: maxDate },
+      },
+    }),
+    prisma.session.findMany({
+      where: {
+        hostId: { in: hostIds },
+        storeId: { not: plan.storeId },
+        status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
+        startTime: { gte: minDate },
+        endTime: { lte: maxDate },
+      },
+      include: {
+        script: { select: { name: true } },
+        store: { select: { name: true } },
       },
     }),
     prisma.hostProficiency.findMany({
@@ -938,7 +972,8 @@ export const validateSchedulePlanForPublish = async (planId: number): Promise<Pu
 
   const ctx: ValidationContext = {
     storeId: plan.storeId,
-    existingSessions,
+    storeSessions,
+    crossStoreHostSessions,
     allProficiencies,
     allRestDays,
     allUnassignableSlots: plan.unassignableSlots,
