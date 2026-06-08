@@ -360,6 +360,107 @@ export const refund = async (
   return { account: updatedAccount, transaction }
 }
 
+export const consumeWithBooking = async (
+  tx: Prisma.TransactionClient,
+  bookingId: number,
+  customerId: number,
+  amount: Prisma.Decimal,
+  storeId: number,
+  operator?: string,
+  remark?: string
+) => {
+  const booking = await tx.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      session: { select: { storeId: true } },
+    },
+  })
+
+  if (!booking) {
+    throw new AppError('预约不存在', 404)
+  }
+
+  if (booking.customerId !== customerId) {
+    throw new AppError('预约不属于该顾客', 400)
+  }
+
+  if (booking.session.storeId !== storeId) {
+    throw new AppError('预约不属于该门店', 400)
+  }
+
+  const account = await getMembershipAccountByCustomerId(tx, customerId)
+  if (!account) {
+    throw new AppError('该顾客未开通会员', 404)
+  }
+  if (!account.isActive) {
+    throw new AppError('会员账户已冻结', 400)
+  }
+  if (account.balance.lt(amount)) {
+    throw new AppError(`余额不足，当前余额: ${account.balance.toString()}`, 400)
+  }
+
+  const newBalance = account.balance.minus(amount)
+
+  const updatedAccount = await tx.membershipAccount.update({
+    where: { id: account.id },
+    data: { balance: newBalance },
+    include: { customer: { select: { id: true, name: true, phone: true } } },
+  })
+
+  const transaction = await createTransaction(
+    tx,
+    account.id,
+    MembershipTransactionType.CONSUME,
+    amount,
+    newBalance,
+    remark,
+    operator,
+    bookingId,
+    storeId
+  )
+
+  const idempotencyKey = generateIdempotencyKey(
+    NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+    `transaction:${transaction.id}`
+  )
+
+  const existingNotification = await tx.notificationTask.findUnique({
+    where: { idempotencyKey },
+  })
+
+  if (!existingNotification && account.customer) {
+    const store = await tx.store.findUnique({ where: { id: storeId } })
+
+    const templateParams: MembershipBalanceChangeParams = {
+      transactionId: transaction.id,
+      type: 'CONSUME',
+      amount: amount.toString(),
+      balanceAfter: newBalance.toString(),
+      remark,
+      storeName: store?.name,
+    }
+
+    await tx.notificationTask.create({
+      data: {
+        type: NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+        channel: NotificationChannel.SMS,
+        status: NotificationStatus.PENDING,
+        idempotencyKey,
+        recipientPhone: account.customer.phone,
+        recipientName: account.customer.name,
+        templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
+        templateParams: templateParams as unknown as Prisma.JsonObject,
+        maxSendCount: 3,
+        relatedCustomerId: account.customerId,
+        relatedTransactionId: transaction.id,
+        relatedBookingId: bookingId,
+      },
+    })
+  }
+
+  return { account: updatedAccount, transaction, booking }
+}
+
 export const getTransactionList = async (
   prisma: typeof import('../../prisma/client').default,
   query: {

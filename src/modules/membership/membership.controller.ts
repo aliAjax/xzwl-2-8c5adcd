@@ -8,6 +8,7 @@ import {
   membershipActivateSchema,
   membershipRechargeSchema,
   membershipConsumeSchema,
+  membershipConsumeWithBookingSchema,
   membershipRefundSchema,
   membershipTransactionQuerySchema,
   customerIdParamSchema,
@@ -16,6 +17,7 @@ import {
   activateMembership,
   recharge,
   consume,
+  consumeWithBooking,
   refund,
   getTransactionList,
   getMembershipAccountByCustomerId,
@@ -43,6 +45,12 @@ type RefundRequest = TypedRequest<
   Record<string, never>,
   Record<string, never>,
   InferSchemaType<typeof membershipRefundSchema>
+>
+
+type ConsumeWithBookingRequest = TypedRequest<
+  Record<string, never>,
+  Record<string, never>,
+  InferSchemaType<typeof membershipConsumeWithBookingSchema>
 >
 
 type GetTransactionListRequest = TypedRequest<
@@ -108,6 +116,20 @@ export const refundHandler = async (req: RefundRequest, res: Response, next: Nex
     })
 
     res.sendSuccess(result, '退款成功')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const consumeWithBookingHandler = async (req: ConsumeWithBookingRequest, res: Response, next: NextFunction) => {
+  try {
+    const { bookingId, customerId, storeId, amount, operator, remark } = req.body
+
+    const result = await prisma.$transaction(async (tx) => {
+      return consumeWithBooking(tx, bookingId, customerId, new Prisma.Decimal(amount), storeId, operator, remark)
+    })
+
+    res.sendSuccess(result, '会员消费成功')
   } catch (error) {
     next(error)
   }

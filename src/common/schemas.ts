@@ -408,6 +408,15 @@ export const membershipRefundSchema = z.object({
   transactionId: z.number().int().positive().optional(),
 })
 
+export const membershipConsumeWithBookingSchema = z.object({
+  bookingId: z.number().int().positive(),
+  customerId: z.number().int().positive(),
+  storeId: z.coerce.number().int().positive(),
+  amount: z.coerce.number().positive(),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+})
+
 export const membershipTransactionQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),

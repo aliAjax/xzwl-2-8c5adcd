@@ -3,6 +3,7 @@ import {
   activateMembershipHandler,
   rechargeHandler,
   consumeHandler,
+  consumeWithBookingHandler,
   refundHandler,
   getTransactionListHandler,
   getAccountByCustomerIdHandler,
@@ -12,6 +13,7 @@ import {
   membershipActivateSchema,
   membershipRechargeSchema,
   membershipConsumeSchema,
+  membershipConsumeWithBookingSchema,
   membershipRefundSchema,
   membershipTransactionQuerySchema,
   customerIdParamSchema,
@@ -23,6 +25,7 @@ const typedHandler = (handler: unknown): RequestHandler => handler as RequestHan
 router.post('/activate', validateBody(membershipActivateSchema), typedHandler(activateMembershipHandler))
 router.post('/recharge', validateBody(membershipRechargeSchema), typedHandler(rechargeHandler))
 router.post('/consume', validateBody(membershipConsumeSchema), typedHandler(consumeHandler))
+router.post('/consume-with-booking', validateBody(membershipConsumeWithBookingSchema), typedHandler(consumeWithBookingHandler))
 router.post('/refund', validateBody(membershipRefundSchema), typedHandler(refundHandler))
 router.get('/transactions', validateQuery(membershipTransactionQuerySchema), typedHandler(getTransactionListHandler))
 router.get('/account/:customerId', validateParams(customerIdParamSchema), typedHandler(getAccountByCustomerIdHandler))
