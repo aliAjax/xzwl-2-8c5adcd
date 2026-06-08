@@ -417,3 +417,161 @@ export const getDailyCloseByStoreAndDate = async (storeId: number, businessDate:
     },
   })
 }
+
+export interface DailyCloseSummaryItem {
+  date: string
+  status: 'CLOSED' | 'UNOFFICIAL'
+  closeStatus?: StoreDailyCloseStatus
+  bookingIncome: Prisma.Decimal
+  membershipRecharge: Prisma.Decimal
+  membershipConsume: Prisma.Decimal
+  refundAmount: Prisma.Decimal
+  operator?: string | null
+}
+
+export const getDailyCloseSummary = async (query: {
+  storeId: number
+  startDate: Date
+  endDate: Date
+}): Promise<DailyCloseSummaryItem[]> => {
+  const { storeId, startDate, endDate } = query
+
+  const start = dayjs(startDate).startOf('day')
+  const end = dayjs(endDate).endOf('day')
+
+  const days: string[] = []
+  let current = start.clone()
+  while (current.isBefore(end) || current.isSame(end, 'day')) {
+    days.push(current.format('YYYY-MM-DD'))
+    current = current.add(1, 'day')
+  }
+
+  const startOfRange = start.toDate()
+  const endOfRange = end.toDate()
+
+  const [dailyCloses, transactions, sessions] = await Promise.all([
+    prisma.storeDailyClose.findMany({
+      where: {
+        storeId,
+        businessDate: {
+          gte: startOfRange,
+          lte: endOfRange,
+        },
+        status: StoreDailyCloseStatus.NORMAL,
+      },
+      select: {
+        businessDate: true,
+        status: true,
+        receivableAmount: true,
+        membershipRecharge: true,
+        membershipConsume: true,
+        refundAmount: true,
+        operator: true,
+      },
+    }),
+    prisma.membershipTransaction.findMany({
+      where: {
+        storeId,
+        status: MembershipTransactionStatus.SUCCESS,
+        createdAt: {
+          gte: startOfRange,
+          lte: endOfRange,
+        },
+      },
+      select: {
+        createdAt: true,
+        type: true,
+        amount: true,
+      },
+    }),
+    prisma.session.findMany({
+      where: {
+        storeId,
+        status: SessionStatus.COMPLETED,
+        startTime: {
+          gte: startOfRange,
+          lte: endOfRange,
+        },
+      },
+      select: {
+        startTime: true,
+        price: true,
+        bookings: {
+          where: {
+            status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+          },
+          select: { playerCount: true },
+        },
+      },
+    }),
+  ])
+
+  const closeMap = new Map<string, typeof dailyCloses[0]>()
+  for (const close of dailyCloses) {
+    const dateKey = dayjs(close.businessDate).format('YYYY-MM-DD')
+    closeMap.set(dateKey, close)
+  }
+
+  const txMap = new Map<string, { recharge: Prisma.Decimal; consume: Prisma.Decimal; refund: Prisma.Decimal }>()
+  for (const tx of transactions) {
+    const dateKey = dayjs(tx.createdAt).format('YYYY-MM-DD')
+    if (!txMap.has(dateKey)) {
+      txMap.set(dateKey, {
+        recharge: new Prisma.Decimal(0),
+        consume: new Prisma.Decimal(0),
+        refund: new Prisma.Decimal(0),
+      })
+    }
+    const dayTx = txMap.get(dateKey)!
+    if (tx.type === MembershipTransactionType.RECHARGE) {
+      dayTx.recharge = dayTx.recharge.plus(tx.amount)
+    } else if (tx.type === MembershipTransactionType.CONSUME) {
+      dayTx.consume = dayTx.consume.plus(tx.amount)
+    } else if (tx.type === MembershipTransactionType.REFUND) {
+      dayTx.refund = dayTx.refund.plus(tx.amount)
+    }
+  }
+
+  const sessionMap = new Map<string, Prisma.Decimal>()
+  for (const session of sessions) {
+    const dateKey = dayjs(session.startTime).format('YYYY-MM-DD')
+    const playerCount = session.bookings.reduce((sum, b) => sum + b.playerCount, 0)
+    const sessionAmount = session.price.times(playerCount)
+    if (!sessionMap.has(dateKey)) {
+      sessionMap.set(dateKey, new Prisma.Decimal(0))
+    }
+    sessionMap.set(dateKey, sessionMap.get(dateKey)!.plus(sessionAmount))
+  }
+
+  const result: DailyCloseSummaryItem[] = []
+  for (const dateKey of days) {
+    const close = closeMap.get(dateKey)
+    const tx = txMap.get(dateKey)
+    const sessionAmount = sessionMap.get(dateKey) || new Prisma.Decimal(0)
+
+    if (close) {
+      result.push({
+        date: dateKey,
+        status: 'CLOSED',
+        closeStatus: close.status,
+        bookingIncome: close.receivableAmount,
+        membershipRecharge: close.membershipRecharge,
+        membershipConsume: close.membershipConsume,
+        refundAmount: close.refundAmount,
+        operator: close.operator,
+      })
+    } else {
+      result.push({
+        date: dateKey,
+        status: 'UNOFFICIAL',
+        bookingIncome: sessionAmount,
+        membershipRecharge: tx?.recharge || new Prisma.Decimal(0),
+        membershipConsume: tx?.consume || new Prisma.Decimal(0),
+        refundAmount: tx?.refund || new Prisma.Decimal(0),
+        operator: null,
+      })
+    }
+  }
+
+  return result
+}

@@ -5,6 +5,7 @@ import {
   dailyCloseCreateSchema,
   dailyCloseQuerySchema,
   dailyCloseVoidSchema,
+  dailyCloseSummaryQuerySchema,
   idParamSchema,
 } from '../../common/schemas'
 import {
@@ -12,6 +13,7 @@ import {
   getDailyCloseList,
   getDailyCloseDetail,
   voidAndRecreateDailyClose,
+  getDailyCloseSummary,
 } from './dailyClose.service'
 
 type CreateDailyCloseRequest = TypedRequest<
@@ -36,6 +38,12 @@ type VoidDailyCloseRequest = TypedRequest<
   InferSchemaType<typeof idParamSchema>,
   Record<string, never>,
   InferSchemaType<typeof dailyCloseVoidSchema>
+>
+
+type GetDailyCloseSummaryRequest = TypedRequest<
+  Record<string, never>,
+  InferSchemaType<typeof dailyCloseSummaryQuerySchema>,
+  Record<string, never>
 >
 
 export const create = async (req: CreateDailyCloseRequest, res: Response, next: NextFunction) => {
@@ -80,6 +88,16 @@ export const voidAndRecreate = async (req: VoidDailyCloseRequest, res: Response,
     const { operator, remark } = req.body
     const result = await voidAndRecreateDailyClose(id, { operator, remark })
     res.sendSuccess(result, '日结单作废重开成功')
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getSummary = async (req: GetDailyCloseSummaryRequest, res: Response, next: NextFunction) => {
+  try {
+    const { storeId, startDate, endDate } = req.query
+    const result = await getDailyCloseSummary({ storeId, startDate, endDate })
+    res.sendSuccess(result)
   } catch (error) {
     next(error)
   }

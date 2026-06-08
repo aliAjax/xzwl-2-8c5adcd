@@ -493,6 +493,15 @@ export const dailyCloseVoidSchema = z.object({
   remark: z.string().optional(),
 })
 
+export const dailyCloseSummaryQuerySchema = z.object({
+  storeId: z.coerce.number().int().positive(),
+  startDate: z.coerce.date(),
+  endDate: z.coerce.date(),
+}).refine(data => data.endDate >= data.startDate, {
+  message: '结束日期不能早于开始日期',
+  path: ['endDate'],
+})
+
 export const notificationQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
