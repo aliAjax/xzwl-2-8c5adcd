@@ -9,6 +9,11 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
   },
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', {
+      tsconfig: '<rootDir>/tsconfig.test.json',
+    }],
+  },
   testTimeout: 30000,
   verbose: true,
   forceExit: true,
@@ -16,4 +21,16 @@ module.exports = {
   resetMocks: true,
   restoreMocks: true,
   detectOpenHandles: true,
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/server.ts',
+  ],
+  coverageThreshold: {
+    global: {
+      lines: 60,
+      functions: 50,
+      branches: 40,
+    },
+  },
 };

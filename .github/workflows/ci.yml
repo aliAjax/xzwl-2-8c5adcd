@@ -1,0 +1,204 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths-ignore:
+      - 'dist/**'
+      - 'node_modules/**'
+      - 'coverage/**'
+      - '*.md'
+      - '.gitignore'
+  pull_request:
+    branches: [main, master, develop]
+    paths-ignore:
+      - 'dist/**'
+      - 'node_modules/**'
+      - 'coverage/**'
+      - '*.md'
+      - '.gitignore'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Static Analysis & Build
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache.outputs.cache-primary-key }}
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: xzwl_test
+          TZ: Asia/Shanghai
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d xzwl_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 60
+          --health-start-period 2s
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5433/xzwl_test?schema=public
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          check-latest: true
+
+      - name: Cache npm dependencies
+        id: cache-npm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Cache Prisma client
+        id: cache-prisma
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.prisma
+            src/prisma/generated
+          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma') }}
+          restore-keys: |
+            ${{ runner.os }}-prisma-
+
+      - name: Install dependencies
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npm run prisma:validate
+
+      - name: Generate Prisma client
+        if: steps.cache-prisma.outputs.cache-hit != 'true'
+        run: npm run prisma:generate
+
+      - name: Validate database migrations
+        run: npx prisma migrate validate
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: TypeScript type check
+        run: npm run typecheck
+
+      - name: ESLint check
+        run: npm run lint
+
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-build
+          path: dist
+          retention-days: 1
+
+  test:
+    name: Integration Tests
+    needs: verify
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: xzwl_test
+          TZ: Asia/Shanghai
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d xzwl_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 60
+          --health-start-period 2s
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5433/xzwl_test?schema=public
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Restore npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          fail-on-cache-miss: true
+
+      - name: Restore Prisma client
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.prisma
+            src/prisma/generated
+          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma') }}
+          fail-on-cache-miss: true
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: Run Jest tests with coverage
+        run: npm run test -- --ci --coverage --maxWorkers=2
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage
+          retention-days: 7
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            coverage
+          retention-days: 7
+
+  ci-complete:
+    name: CI Complete
+    needs: [verify, test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs succeeded
+        if: needs.verify.result != 'success' || needs.test.result != 'success'
+        run: exit 1
+
+      - name: CI Pipeline Passed
+        run: echo "All CI checks passed successfully!"

@@ -16,3 +16,9 @@ coverage
 *.tsbuildinfo
 .vscode
 .idea
+prisma/generated/
+tmp/
+temp/
+*.pid
+*.seed
+*.pid.lock
