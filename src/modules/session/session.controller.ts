@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express'
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
-import { SessionStatus } from '@prisma/client'
+import { SessionStatus, NotificationType, NotificationChannel, BookingStatus } from '@prisma/client'
 import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
   sessionSchema,
@@ -12,6 +12,8 @@ import {
   idParamSchema,
   detailQuerySchema,
 } from '../../common/schemas'
+import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
+import { SessionCancelledParams } from '../notification/types'
 
 type CreateSessionRequest = TypedRequest<
   Record<string, never>,

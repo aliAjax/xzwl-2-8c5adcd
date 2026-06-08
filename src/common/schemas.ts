@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus, StoreDailyCloseStatus } from '@prisma/client'
+import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus, StoreDailyCloseStatus, NotificationTaskType, NotificationChannel, NotificationTaskStatus } from '@prisma/client'
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),

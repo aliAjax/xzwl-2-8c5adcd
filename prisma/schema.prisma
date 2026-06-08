@@ -83,7 +83,6 @@ model Store {
   sessions          Session[]
   schedulePlans     SchedulePlan[]
   dailyCloses       StoreDailyClose[]
-  membershipTransactions MembershipTransaction[]
 
   @@index([isActive])
 }
@@ -232,7 +231,6 @@ model MembershipAccount {
 model MembershipTransaction {
   id              Int                         @id @default(autoincrement())
   accountId       Int
-  storeId         Int?
   type            MembershipTransactionType
   amount          Decimal                     @db.Decimal(10, 2)
   balanceAfter    Decimal                     @db.Decimal(10, 2)
@@ -243,11 +241,9 @@ model MembershipTransaction {
   createdAt       DateTime                    @default(now())
   updatedAt       DateTime                    @updatedAt
   account         MembershipAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  store           Store?                      @relation(fields: [storeId], references: [id], onDelete: SetNull)
   relatedBooking  Booking?                    @relation(fields: [relatedBookingId], references: [id], onDelete: SetNull)
 
   @@index([accountId])
-  @@index([storeId])
   @@index([type])
   @@index([status])
   @@index([relatedBookingId])
@@ -359,7 +355,7 @@ model StoreDailyClose {
   bookingSnapshots       StoreDailyCloseBooking[]
   transactionSnapshots   StoreDailyCloseTransaction[]
 
-  @@index([storeId, businessDate, status])
+  @@unique([storeId, businessDate], where: { status: NORMAL })
   @@index([storeId])
   @@index([businessDate])
   @@index([status])

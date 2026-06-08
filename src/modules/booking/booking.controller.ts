@@ -1,5 +1,5 @@
 import { Response, NextFunction } from 'express'
-import { Prisma, BookingStatus } from '@prisma/client'
+import { Prisma, BookingStatus, NotificationType, NotificationChannel } from '@prisma/client'
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
@@ -20,6 +20,8 @@ import {
 } from './booking.service'
 import { processPendingWaitlists } from '../waitlist/waitlist.service'
 import { consume as membershipConsume } from '../membership/membership.service'
+import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
+import { SessionStartReminderParams, SessionCancelledParams } from '../notification/types'
 
 type CreateBookingRequest = TypedRequest<
   Record<string, never>,

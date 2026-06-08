@@ -1,5 +1,9 @@
-import { Prisma, MembershipTransactionType, MembershipTransactionStatus } from '@prisma/client'
+import prisma from "../../prisma/client"
+import { Prisma, MembershipTransactionType, MembershipTransactionStatus, NotificationType, NotificationChannel, NotificationStatus } from '@prisma/client'
 import { AppError } from '../../middleware/errorHandler'
+
+import { generateIdempotencyKey } from '../notification/notification.service'
+import { MembershipBalanceChangeParams } from '../notification/types'
 
 export interface MembershipTransactionCreateData {
   accountId: number
@@ -144,6 +148,48 @@ export const recharge = async (
     storeId
   )
 
+  try {
+    const idempotencyKey = generateIdempotencyKey(
+      NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+      `transaction:${transaction.id}`
+    )
+
+    const existingNotification = await tx.notificationTask.findUnique({
+      where: { idempotencyKey },
+    })
+
+    if (!existingNotification && account.customer) {
+      const store = await tx.store.findUnique({ where: { id: storeId }})
+      
+      const templateParams: MembershipBalanceChangeParams = {
+        transactionId: transaction.id,
+        type: "RECHARGE",
+        amount: amount.toString(),
+        balanceAfter: newBalance.toString(),
+        remark,
+        storeName: store?.name,
+      }
+
+      await tx.notificationTask.create({
+        data: {
+          type: NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+          channel: NotificationChannel.SMS,
+          status: NotificationStatus.PENDING,
+          idempotencyKey,
+          recipientPhone: account.customer.phone,
+          recipientName: account.customer.name,
+          templateCode: "MEMBERSHIP_BALANCE_CHANGE",
+          templateParams: templateParams as unknown as Prisma.JsonObject,
+          maxSendCount: 3,
+          relatedCustomerId: account.customerId,
+          relatedTransactionId: transaction.id,
+        },
+      })
+    }
+  } catch (notificationError) {
+    console.error("Failed to create notification for recharge:", notificationError)
+  }
+
   return { account: updatedAccount, transaction }
 }
 
@@ -187,6 +233,48 @@ export const consume = async (
     storeId
   )
 
+  try {
+    const idempotencyKey = generateIdempotencyKey(
+      NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+      `transaction:${transaction.id}`
+    )
+
+    const existingNotification = await tx.notificationTask.findUnique({
+      where: { idempotencyKey },
+    })
+
+    if (!existingNotification && account.customer) {
+      const store = await tx.store.findUnique({ where: { id: storeId }})
+      
+      const templateParams: MembershipBalanceChangeParams = {
+        transactionId: transaction.id,
+        type: "CONSUME",
+        amount: amount.toString(),
+        balanceAfter: newBalance.toString(),
+        remark,
+        storeName: store?.name,
+      }
+
+      await tx.notificationTask.create({
+        data: {
+          type: NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+          channel: NotificationChannel.SMS,
+          status: NotificationStatus.PENDING,
+          idempotencyKey,
+          recipientPhone: account.customer.phone,
+          recipientName: account.customer.name,
+          templateCode: "MEMBERSHIP_BALANCE_CHANGE",
+          templateParams: templateParams as unknown as Prisma.JsonObject,
+          maxSendCount: 3,
+          relatedCustomerId: account.customerId,
+          relatedTransactionId: transaction.id,
+        },
+      })
+    }
+  } catch (notificationError) {
+    console.error("Failed to create notification for consume:", notificationError)
+  }
+
   return { account: updatedAccount, transaction }
 }
 
@@ -226,6 +314,48 @@ export const refund = async (
     relatedBookingId,
     storeId
   )
+
+  try {
+    const idempotencyKey = generateIdempotencyKey(
+      NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+      `transaction:${transaction.id}`
+    )
+
+    const existingNotification = await tx.notificationTask.findUnique({
+      where: { idempotencyKey },
+    })
+
+    if (!existingNotification && account.customer) {
+      const store = await tx.store.findUnique({ where: { id: storeId }})
+      
+      const templateParams: MembershipBalanceChangeParams = {
+        transactionId: transaction.id,
+        type: "REFUND",
+        amount: amount.toString(),
+        balanceAfter: newBalance.toString(),
+        remark,
+        storeName: store?.name,
+      }
+
+      await tx.notificationTask.create({
+        data: {
+          type: NotificationType.MEMBERSHIP_BALANCE_CHANGE,
+          channel: NotificationChannel.SMS,
+          status: NotificationStatus.PENDING,
+          idempotencyKey,
+          recipientPhone: account.customer.phone,
+          recipientName: account.customer.name,
+          templateCode: "MEMBERSHIP_BALANCE_CHANGE",
+          templateParams: templateParams as unknown as Prisma.JsonObject,
+          maxSendCount: 3,
+          relatedCustomerId: account.customerId,
+          relatedTransactionId: transaction.id,
+        },
+      })
+    }
+  } catch (notificationError) {
+    console.error("Failed to create notification for refund:", notificationError)
+  }
 
   return { account: updatedAccount, transaction }
 }

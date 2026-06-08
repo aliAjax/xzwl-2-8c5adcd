@@ -75,7 +75,22 @@ const getMembershipTransactions = async (
           },
         },
         {
-          storeId,
+          relatedBookingId: null,
+          account: {
+            customer: {
+              bookings: {
+                some: {
+                  session: {
+                    storeId,
+                    startTime: {
+                      gte: startOfDay,
+                      lte: endOfDay,
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       ],
     },
