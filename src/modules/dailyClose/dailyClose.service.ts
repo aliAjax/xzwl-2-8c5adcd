@@ -90,6 +90,25 @@ export interface SessionDiffItem {
   }
 }
 
+export interface RecloseHistoryItem {
+  id: number
+  businessDate: Date
+  status: StoreDailyCloseStatus
+  createdAt: Date
+  operator: string | null
+  remark: string | null
+  originalCloseId: number | null
+  completedSessionCount: number
+  totalBookingCount: number
+  totalPlayerCount: number
+  receivableAmount: Prisma.Decimal
+  membershipConsume: Prisma.Decimal
+  membershipRecharge: Prisma.Decimal
+  refundAmount: Prisma.Decimal
+  discrepancyAmount: Prisma.Decimal
+  recloseSequence: number
+}
+
 export interface DailyCloseDiffResult {
   originalClose: {
     id: number
@@ -104,6 +123,7 @@ export interface DailyCloseDiffResult {
     membershipRecharge: Prisma.Decimal
     refundAmount: Prisma.Decimal
     discrepancyAmount: Prisma.Decimal
+    recloseCount: number
   }
   currentData: {
     completedSessionCount: number
@@ -129,12 +149,97 @@ export interface DailyCloseDiffResult {
   bookingDiffs: BookingDiffItem[]
   transactionDiffs: TransactionDiffItem[]
   hasDifferences: boolean
+  recloseHistory: RecloseHistoryItem[]
 }
 
 const getDateRange = (date: Date) => {
   const startOfDay = dayjs(date).startOf('day').toDate()
   const endOfDay = dayjs(date).endOf('day').toDate()
   return { startOfDay, endOfDay }
+}
+
+const toDecimal = (value: unknown): Prisma.Decimal => {
+  if (value instanceof Prisma.Decimal) return value
+  return new Prisma.Decimal(String(value))
+}
+
+const toDate = (value: unknown): Date => {
+  if (value instanceof Date) return value
+  return new Date(String(value))
+}
+
+const getLatestNormalDailyClose = async (
+  tx: Prisma.TransactionClient | typeof prisma,
+  storeId: number,
+  businessDate: Date
+) => {
+  const { startOfDay } = getDateRange(businessDate)
+  return tx.storeDailyClose.findFirst({
+    where: {
+      storeId,
+      businessDate: startOfDay,
+      status: StoreDailyCloseStatus.NORMAL,
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      sessionSnapshots: true,
+      bookingSnapshots: true,
+      transactionSnapshots: true,
+    },
+  })
+}
+
+const getRecloseHistory = async (
+  tx: Prisma.TransactionClient | typeof prisma,
+  storeId: number,
+  businessDate: Date
+): Promise<RecloseHistoryItem[]> => {
+  const { startOfDay } = getDateRange(businessDate)
+  const allCloses = await tx.storeDailyClose.findMany({
+    where: {
+      storeId,
+      businessDate: startOfDay,
+    },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      businessDate: true,
+      status: true,
+      createdAt: true,
+      operator: true,
+      remark: true,
+      originalCloseId: true,
+      completedSessionCount: true,
+      totalBookingCount: true,
+      totalPlayerCount: true,
+      receivableAmount: true,
+      membershipConsume: true,
+      membershipRecharge: true,
+      refundAmount: true,
+      discrepancyAmount: true,
+    },
+  })
+
+  const history: RecloseHistoryItem[] = []
+  const rootClose = allCloses.find(c => c.originalCloseId === null)
+  if (!rootClose) {
+    return allCloses.map((c, idx) => ({
+      ...c,
+      recloseSequence: idx + 1,
+    }))
+  }
+
+  let current: typeof rootClose | undefined = rootClose
+  let sequence = 1
+  while (current) {
+    history.push({
+      ...current,
+      recloseSequence: sequence++,
+    })
+    current = allCloses.find(c => c.originalCloseId === current!.id)
+  }
+
+  return history
 }
 
 const getCompletedSessions = async (
@@ -185,6 +290,7 @@ const getMembershipTransactions = async (
         lte: endOfDay,
       },
       OR: [
+        { storeId },
         {
           relatedBooking: {
             session: { storeId },
@@ -192,6 +298,7 @@ const getMembershipTransactions = async (
         },
         {
           relatedBookingId: null,
+          storeId: null,
           account: {
             customer: {
               bookings: {
@@ -419,7 +526,7 @@ export const getDailyCloseList = async (query: {
       where,
       include: {
         store: { select: { id: true, name: true } },
-        originalClose: { select: { id: true, createdAt: true } },
+        originalClose: { select: { id: true, createdAt: true, operator: true } },
       },
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -428,7 +535,34 @@ export const getDailyCloseList = async (query: {
     prisma.storeDailyClose.count({ where }),
   ])
 
-  return { list, total }
+  const uniqueDateKeys = new Set<string>()
+  const dateKeyToParams = new Map<string, { storeId: number; businessDate: Date }>()
+
+  for (const item of list) {
+    const key = `${item.storeId}-${dayjs(item.businessDate).format('YYYY-MM-DD')}`
+    if (!uniqueDateKeys.has(key)) {
+      uniqueDateKeys.add(key)
+      dateKeyToParams.set(key, { storeId: item.storeId, businessDate: item.businessDate })
+    }
+  }
+
+  const recloseCountMap = new Map<string, number>()
+  await Promise.all(
+    Array.from(dateKeyToParams.entries()).map(async ([key, params]) => {
+      const history = await getRecloseHistory(prisma, params.storeId, params.businessDate)
+      recloseCountMap.set(key, history.length - 1)
+    })
+  )
+
+  const listWithRecloseCount = list.map(item => {
+    const key = `${item.storeId}-${dayjs(item.businessDate).format('YYYY-MM-DD')}`
+    return {
+      ...item,
+      recloseCount: recloseCountMap.get(key) || 0,
+    }
+  })
+
+  return { list: listWithRecloseCount, total }
 }
 
 export const getDailyCloseDetail = async (id: number) => {
@@ -453,7 +587,13 @@ export const getDailyCloseDetail = async (id: number) => {
     throw new AppError('日结单不存在', 404)
   }
 
-  return dailyClose
+  const recloseHistory = await getRecloseHistory(prisma, dailyClose.storeId, dailyClose.businessDate)
+
+  return {
+    ...dailyClose,
+    recloseHistory,
+    recloseCount: recloseHistory.length - 1,
+  }
 }
 
 export const voidAndRecreateDailyClose = async (id: number, data: DailyCloseVoidData) => {
@@ -690,37 +830,6 @@ export const getDailyCloseSummary = async (query: {
   }
 
   return result
-}
-
-const getLatestNormalDailyClose = async (
-  tx: Prisma.TransactionClient | typeof prisma,
-  storeId: number,
-  businessDate: Date
-) => {
-  const { startOfDay } = getDateRange(businessDate)
-  return tx.storeDailyClose.findFirst({
-    where: {
-      storeId,
-      businessDate: startOfDay,
-      status: StoreDailyCloseStatus.NORMAL,
-    },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      sessionSnapshots: true,
-      bookingSnapshots: true,
-      transactionSnapshots: true,
-    },
-  })
-}
-
-const toDecimal = (value: unknown): Prisma.Decimal => {
-  if (value instanceof Prisma.Decimal) return value
-  return new Prisma.Decimal(String(value))
-}
-
-const toDate = (value: unknown): Date => {
-  if (value instanceof Date) return value
-  return new Date(String(value))
 }
 
 const compareSessions = (
@@ -989,8 +1098,12 @@ export const getDailyCloseDiff = async (data: DailyCloseDiffData): Promise<Daily
   const { startOfDay } = getDateRange(businessDate)
   const normalizedDate = startOfDay
 
-  const { summary: currentSummary, sessionSnapshots, bookingSnapshots, transactionSnapshots } =
-    await calculateDailyCloseData(prisma, storeId, normalizedDate)
+  const [currentDataResult, recloseHistory] = await Promise.all([
+    calculateDailyCloseData(prisma, storeId, normalizedDate),
+    getRecloseHistory(prisma, storeId, normalizedDate),
+  ])
+
+  const { summary: currentSummary, sessionSnapshots, bookingSnapshots, transactionSnapshots } = currentDataResult
 
   const sessionDiffs = compareSessions(originalClose.sessionSnapshots, sessionSnapshots)
   const bookingDiffs = compareBookings(originalClose.bookingSnapshots, bookingSnapshots)
@@ -1031,6 +1144,7 @@ export const getDailyCloseDiff = async (data: DailyCloseDiffData): Promise<Daily
       membershipRecharge: originalClose.membershipRecharge,
       refundAmount: originalClose.refundAmount,
       discrepancyAmount: originalClose.discrepancyAmount,
+      recloseCount: recloseHistory.length - 1,
     },
     currentData: {
       completedSessionCount: currentSummary.completedSessionCount,
@@ -1047,6 +1161,7 @@ export const getDailyCloseDiff = async (data: DailyCloseDiffData): Promise<Daily
     bookingDiffs,
     transactionDiffs,
     hasDifferences,
+    recloseHistory,
   }
 }
 
@@ -1062,26 +1177,13 @@ export const recloseDailyClose = async (data: DailyCloseRecloseData) => {
   const normalizedDate = startOfDay
 
   return prisma.$transaction(async tx => {
-    const originalClose = await getLatestNormalDailyClose(tx, storeId, normalizedDate)
-    if (!originalClose) {
+    const currentClose = await getLatestNormalDailyClose(tx, storeId, normalizedDate)
+    if (!currentClose) {
       throw new AppError('该门店该营业日期暂无有效的日结单', 404)
     }
 
-    const hasActiveVoid = await tx.storeDailyClose.findFirst({
-      where: {
-        storeId,
-        businessDate: normalizedDate,
-        status: StoreDailyCloseStatus.NORMAL,
-        originalCloseId: { not: null },
-      },
-    })
-
-    if (hasActiveVoid) {
-      throw new AppError('该营业日期已有差异重结后的有效日结单，请先确认是否需要再次重结', 400)
-    }
-
     await tx.storeDailyClose.update({
-      where: { id: originalClose.id },
+      where: { id: currentClose.id },
       data: {
         status: StoreDailyCloseStatus.VOIDED,
       },
@@ -1098,7 +1200,7 @@ export const recloseDailyClose = async (data: DailyCloseRecloseData) => {
         ...summary,
         operator,
         remark,
-        originalCloseId: originalClose.id,
+        originalCloseId: currentClose.id,
         sessionSnapshots: {
           createMany: {
             data: sessionSnapshots,
@@ -1121,20 +1223,24 @@ export const recloseDailyClose = async (data: DailyCloseRecloseData) => {
       },
     })
 
+    const recloseHistory = await getRecloseHistory(tx, storeId, normalizedDate)
+
     return {
       voidedClose: {
-        id: originalClose.id,
+        id: currentClose.id,
         status: StoreDailyCloseStatus.VOIDED,
-        completedSessionCount: originalClose.completedSessionCount,
-        totalBookingCount: originalClose.totalBookingCount,
-        totalPlayerCount: originalClose.totalPlayerCount,
-        receivableAmount: originalClose.receivableAmount,
-        membershipConsume: originalClose.membershipConsume,
-        membershipRecharge: originalClose.membershipRecharge,
-        refundAmount: originalClose.refundAmount,
-        discrepancyAmount: originalClose.discrepancyAmount,
+        completedSessionCount: currentClose.completedSessionCount,
+        totalBookingCount: currentClose.totalBookingCount,
+        totalPlayerCount: currentClose.totalPlayerCount,
+        receivableAmount: currentClose.receivableAmount,
+        membershipConsume: currentClose.membershipConsume,
+        membershipRecharge: currentClose.membershipRecharge,
+        refundAmount: currentClose.refundAmount,
+        discrepancyAmount: currentClose.discrepancyAmount,
       },
       newClose,
+      recloseHistory,
+      recloseCount: recloseHistory.length - 1,
     }
   })
 }
