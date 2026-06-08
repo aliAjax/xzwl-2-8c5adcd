@@ -98,6 +98,7 @@ export interface NotificationTaskFilter {
   relatedSessionId?: number
   startDate?: Date
   endDate?: Date
+  storeId?: number
 }
 
 export interface NotificationTaskWithRelations extends Prisma.NotificationTaskGetPayload<{

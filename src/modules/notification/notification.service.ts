@@ -63,7 +63,7 @@ export const createNotificationTask = async (
       recipientPhone: data.recipient.phone,
       recipientName: data.recipient.name,
       templateCode: data.templateCode,
-      templateParams: data.templateParams as Prisma.JsonObject,
+      templateParams: data.templateParams as unknown as Prisma.JsonObject,
       maxSendCount: data.maxSendCount || 3,
       relatedBookingId: data.relatedBookingId,
       relatedSessionId: data.relatedSessionId,
@@ -77,12 +77,21 @@ export const createNotificationTask = async (
 }
 
 export const getNotificationTaskById = async (
-  id: number
+  id: number,
+  storeId?: number
 ): Promise<NotificationTaskWithRelations | null> => {
   const task = await prisma.notificationTask.findUnique({
     where: { id },
     include: notificationTaskInclude
   })
+  
+  if (task && storeId !== undefined) {
+    const taskStoreId = task.relatedSession?.storeId ?? task.relatedBooking?.session?.storeId
+    if (taskStoreId !== storeId) {
+      throw new AppError('通知任务不属于该门店', 404)
+    }
+  }
+  
   return task as NotificationTaskWithRelations | null
 }
 
@@ -101,6 +110,12 @@ export const getNotificationTaskList = async (
   if (filter.relatedSessionId) where.relatedSessionId = filter.relatedSessionId
   if (filter.startDate) where.createdAt = { ...where.createdAt as object, gte: filter.startDate }
   if (filter.endDate) where.createdAt = { ...where.createdAt as object, lte: filter.endDate }
+  if (filter.storeId) {
+    where.OR = [
+      { relatedSession: { storeId: filter.storeId } },
+      { relatedBooking: { session: { storeId: filter.storeId } } }
+    ]
+  }
 
   const [tasks, total] = await Promise.all([
     prisma.notificationTask.findMany({
@@ -160,7 +175,7 @@ export const processNotificationTask = async (
     })
 
     try {
-      const templateParams = lockedTask.templateParams as NotificationTemplateParams & { recipientName?: string }
+      const templateParams = lockedTask.templateParams as unknown as NotificationTemplateParams & { recipientName?: string }
       const content = renderTemplate(lockedTask.templateCode, {
         ...templateParams,
         recipientName: lockedTask.recipientName || undefined
@@ -171,7 +186,7 @@ export const processNotificationTask = async (
         { name: lockedTask.recipientName || '', phone: lockedTask.recipientPhone },
         content,
         lockedTask.templateCode,
-        templateParams as Record<string, unknown>
+        templateParams as unknown as Record<string, unknown>
       )
 
       if (result.success) {

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus, StoreDailyCloseStatus, NotificationTaskType, NotificationChannel, NotificationTaskStatus } from '@prisma/client'
+import { Difficulty, ProficiencyLevel, SessionStatus, BookingStatus, WaitlistStatus, MembershipTransactionType, MembershipTransactionStatus, SchedulePlanStatus, StoreDailyCloseStatus, NotificationType, NotificationStatus, NotificationChannel } from '@prisma/client'
 
 export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -459,4 +459,22 @@ export const dailyCloseQuerySchema = z.object({
 export const dailyCloseVoidSchema = z.object({
   operator: z.string().optional(),
   remark: z.string().optional(),
+})
+
+export const notificationQuerySchema = z.object({
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
+  type: z.nativeEnum(NotificationType).optional(),
+  status: z.nativeEnum(NotificationStatus).optional(),
+  channel: z.nativeEnum(NotificationChannel).optional(),
+  recipientPhone: z.string().optional(),
+  relatedCustomerId: z.coerce.number().int().positive().optional(),
+  relatedSessionId: z.coerce.number().int().positive().optional(),
+  startDate: z.coerce.date().optional(),
+  endDate: z.coerce.date().optional(),
+  storeId: z.coerce.number().int().positive().optional(),
+})
+
+export const notificationIdParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
 })

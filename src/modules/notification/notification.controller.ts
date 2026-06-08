@@ -1,30 +1,34 @@
 import { Response, NextFunction } from 'express'
-import { createPaginationResult } from '../../common/types'
 import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
-  notificationTaskQuerySchema,
-  notificationTaskRetrySchema,
-  idParamSchema,
+  notificationQuerySchema,
+  notificationIdParamSchema,
   detailQuerySchema,
 } from '../../common/schemas'
-import * as notificationService from './notification.service'
+import {
+  getNotificationTaskList,
+  getNotificationTaskById,
+  retryNotificationTask,
+  processPendingNotifications,
+} from './notification.service'
+import { AppError } from '../../middleware/errorHandler'
 
 type GetNotificationTaskListRequest = TypedRequest<
   Record<string, never>,
-  InferSchemaType<typeof notificationTaskQuerySchema>,
+  InferSchemaType<typeof notificationQuerySchema>,
   Record<string, never>
 >
 
 type GetNotificationTaskByIdRequest = TypedRequest<
-  InferSchemaType<typeof idParamSchema>,
+  InferSchemaType<typeof notificationIdParamSchema>,
   InferSchemaType<typeof detailQuerySchema>,
   Record<string, never>
 >
 
 type RetryNotificationTaskRequest = TypedRequest<
-  InferSchemaType<typeof idParamSchema>,
+  InferSchemaType<typeof notificationIdParamSchema>,
   Record<string, never>,
-  InferSchemaType<typeof notificationTaskRetrySchema>
+  Record<string, never>
 >
 
 export const getNotificationTaskListHandler = async (
@@ -33,18 +37,21 @@ export const getNotificationTaskListHandler = async (
   next: NextFunction
 ) => {
   try {
-    const { page, pageSize, type, status, channel, businessType, keyword, storeId } = req.query
+    const { page, pageSize, type, status, channel, recipientPhone, relatedCustomerId, relatedSessionId, startDate, endDate, storeId } = req.query
 
-    const { tasks, total } = await getNotificationTaskList(page, pageSize, {
+    const result = await getNotificationTaskList(page, pageSize, {
       type,
       status,
       channel,
-      businessType,
-      keyword,
+      recipientPhone,
+      relatedCustomerId,
+      relatedSessionId,
+      startDate,
+      endDate,
       storeId,
     })
 
-    res.sendSuccess(createPaginationResult(tasks, total, page, pageSize))
+    res.sendSuccess(result)
   } catch (error) {
     next(error)
   }
@@ -60,6 +67,10 @@ export const getNotificationTaskByIdHandler = async (
     const { storeId } = req.query
 
     const task = await getNotificationTaskById(id, storeId)
+
+    if (!task) {
+      throw new AppError('通知任务不存在', 404)
+    }
 
     res.sendSuccess(task)
   } catch (error) {
@@ -89,19 +100,11 @@ export const processPendingTasksHandler = async (
   next: NextFunction
 ) => {
   try {
-    const results = await processPendingTasks()
-
-    const successCount = results.filter((r) => r.success).length
-    const failCount = results.filter((r) => !r.success).length
+    const result = await processPendingNotifications()
 
     res.sendSuccess(
-      {
-        total: results.length,
-        success: successCount,
-        failed: failCount,
-        results,
-      },
-      `后台处理完成，成功 ${successCount} 条，失败 ${failCount} 条`
+      result,
+      `后台处理完成，成功 ${result.success} 条，失败 ${result.failed} 条`
     )
   } catch (error) {
     next(error)

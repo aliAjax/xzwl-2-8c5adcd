@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express'
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
-import { SessionStatus, NotificationType, NotificationChannel, BookingStatus } from '@prisma/client'
+import { SessionStatus, NotificationType, NotificationChannel, NotificationStatus, BookingStatus } from '@prisma/client'
 import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
   sessionSchema,
@@ -400,6 +400,8 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
       await Promise.all(conflictChecks)
     }
 
+    const statusChangedToCancelled = status === SessionStatus.CANCELLED && existingSession.status !== SessionStatus.CANCELLED
+
     const session = await prisma.session.update({
       where: { id },
       data: req.body,
@@ -410,6 +412,71 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
         room: { select: { id: true, name: true, capacity: true } },
       },
     })
+
+    if (statusChangedToCancelled) {
+      try {
+        const sessionWithBookings = await prisma.session.findUnique({
+          where: { id },
+          include: {
+            script: true,
+            store: true,
+            bookings: {
+              where: {
+                status: {
+                  notIn: [BookingStatus.CANCELLED]
+                }
+              },
+              include: {
+                customer: true
+              }
+            }
+          }
+        })
+
+        if (sessionWithBookings) {
+          for (const booking of sessionWithBookings.bookings) {
+            try {
+              const idempotencyKey = generateIdempotencyKey(
+                NotificationType.SESSION_CANCELLED,
+                `session:${id}:booking:${booking.id}`
+              )
+
+              const existingNotification = await prisma.notificationTask.findUnique({
+                where: { idempotencyKey }
+              })
+
+              if (!existingNotification && booking.customer) {
+                const templateParams: SessionCancelledParams = {
+                  sessionId: id,
+                  scriptName: sessionWithBookings.script.name,
+                  startTime: sessionWithBookings.startTime.toLocaleString('zh-CN'),
+                  storeName: sessionWithBookings.store?.name
+                }
+
+                await createNotificationTask({
+                  type: NotificationType.SESSION_CANCELLED,
+                  channel: NotificationChannel.SMS,
+                  recipient: {
+                    name: booking.customer.name,
+                    phone: booking.customer.phone
+                  },
+                  templateCode: 'SESSION_CANCELLED',
+                  templateParams,
+                  idempotencyKey,
+                  relatedBookingId: booking.id,
+                  relatedSessionId: id,
+                  relatedCustomerId: booking.customerId
+                })
+              }
+            } catch (bookingNotificationError) {
+              console.error(`Failed to create notification for booking ${booking.id}:`, bookingNotificationError)
+            }
+          }
+        }
+      } catch (notificationError) {
+        console.error('Failed to create notifications for session cancellation:', notificationError)
+      }
+    }
 
     res.sendSuccess(session, '场次更新成功')
   } catch (error) {

@@ -67,6 +67,27 @@ enum MembershipTransactionStatus {
   CANCELLED
 }
 
+enum NotificationType {
+  SESSION_START_REMINDER
+  SESSION_CANCELLED
+  WAITLIST_CONFIRMED
+  MEMBERSHIP_BALANCE_CHANGE
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRYING
+  CANCELLED
+}
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  WECHAT
+}
+
 model Store {
   id                Int       @id @default(autoincrement())
   name              String    @unique
@@ -83,6 +104,7 @@ model Store {
   sessions          Session[]
   schedulePlans     SchedulePlan[]
   dailyCloses       StoreDailyClose[]
+  membershipTransactions MembershipTransaction[]
 
   @@index([isActive])
 }
@@ -193,6 +215,7 @@ model Session {
   room          Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
   bookings      Booking[]
   waitlists     Waitlist[]
+  notificationTasks NotificationTask[]
 
   @@index([storeId])
   @@index([scriptId])
@@ -212,6 +235,7 @@ model Customer {
   bookings  Booking[]
   waitlists Waitlist[]
   membershipAccount MembershipAccount?
+  notificationTasks NotificationTask[]
 }
 
 model MembershipAccount {
@@ -231,6 +255,7 @@ model MembershipAccount {
 model MembershipTransaction {
   id              Int                         @id @default(autoincrement())
   accountId       Int
+  storeId         Int?
   type            MembershipTransactionType
   amount          Decimal                     @db.Decimal(10, 2)
   balanceAfter    Decimal                     @db.Decimal(10, 2)
@@ -241,9 +266,12 @@ model MembershipTransaction {
   createdAt       DateTime                    @default(now())
   updatedAt       DateTime                    @updatedAt
   account         MembershipAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  store           Store?                      @relation(fields: [storeId], references: [id], onDelete: SetNull)
   relatedBooking  Booking?                    @relation(fields: [relatedBookingId], references: [id], onDelete: SetNull)
+  notificationTasks NotificationTask[]
 
   @@index([accountId])
+  @@index([storeId])
   @@index([type])
   @@index([status])
   @@index([relatedBookingId])
@@ -262,6 +290,7 @@ model Booking {
   session     Session                 @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   customer    Customer                @relation(fields: [customerId], references: [id], onDelete: Cascade)
   membershipTransactions MembershipTransaction[]
+  notificationTasks NotificationTask[]
 
   @@index([sessionId])
   @@index([customerId])
@@ -355,7 +384,7 @@ model StoreDailyClose {
   bookingSnapshots       StoreDailyCloseBooking[]
   transactionSnapshots   StoreDailyCloseTransaction[]
 
-  @@unique([storeId, businessDate], where: { status: NORMAL })
+  @@index([storeId, businessDate, status])
   @@index([storeId])
   @@index([businessDate])
   @@index([status])
@@ -422,4 +451,43 @@ model StoreDailyCloseTransaction {
   @@index([dailyCloseId])
   @@index([transactionId])
   @@index([type])
+}
+
+model NotificationTask {
+  id              Int                 @id @default(autoincrement())
+  type            NotificationType
+  channel         NotificationChannel @default(SMS)
+  status          NotificationStatus  @default(PENDING)
+  idempotencyKey  String              @unique
+  recipientPhone  String
+  recipientName   String?
+  templateCode    String
+  templateParams  Json
+  content         String?
+  sendCount       Int                 @default(0)
+  maxSendCount    Int                 @default(3)
+  lastSendAt      DateTime?
+  failedReason    String?
+  retryAfter      DateTime?
+  relatedBookingId Int?
+  relatedSessionId Int?
+  relatedCustomerId Int?
+  relatedTransactionId Int?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  sentAt          DateTime?
+
+  relatedBooking      Booking?              @relation(fields: [relatedBookingId], references: [id], onDelete: SetNull)
+  relatedSession      Session?              @relation(fields: [relatedSessionId], references: [id], onDelete: SetNull)
+  relatedCustomer     Customer?             @relation(fields: [relatedCustomerId], references: [id], onDelete: SetNull)
+  relatedTransaction  MembershipTransaction? @relation(fields: [relatedTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([type])
+  @@index([status])
+  @@index([recipientPhone])
+  @@index([relatedBookingId])
+  @@index([relatedSessionId])
+  @@index([relatedCustomerId])
+  @@index([createdAt])
+  @@index([status, createdAt])
 }

@@ -1,6 +1,6 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { WaitlistStatus, BookingStatus, Prisma, NotificationType, NotificationChannel } from '@prisma/client'
+import { WaitlistStatus, BookingStatus, Prisma, NotificationType, NotificationChannel, NotificationStatus } from '@prisma/client'
 import {
   validatePlayerCount,
   createBookingWithSessionUpdate,

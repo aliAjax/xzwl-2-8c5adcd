@@ -1,11 +1,11 @@
 import { NotificationType, NotificationChannel } from '@prisma/client'
-import { NotificationTemplate, NotificationTemplateParams, SessionStartReminderParams, SessionCancelledParams, WaitlistConfirmedParams, MembershipBalanceChangeParams } from './types'
+import { NotificationTemplate, NotificationTemplateParams } from './types'
 
 export const NOTIFICATION_TEMPLATES: NotificationTemplate[] = [
   {
     code: 'SESSION_START_REMINDER',
     type: NotificationType.SESSION_START_REMINDER,
-    name: '场次开始提醒',
+    name: '场次开场提醒',
     channel: NotificationChannel.SMS,
     contentTemplate: '【{{storeName}}】尊敬的{{recipientName}}，您预约的《{{scriptName}}》将于{{startTime}}开始，主持人：{{hostName}}，房间：{{roomName}}，共{{playerCount}}人。请准时到场，如有疑问请联系客服。',
     description: '场次开始前发送的提醒短信'
