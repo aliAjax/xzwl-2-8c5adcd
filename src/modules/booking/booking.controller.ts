@@ -21,7 +21,7 @@ import {
   customerWithMembershipSelect,
   MembershipAccountInfo,
 } from './booking.service'
-import { processPendingWaitlists } from '../waitlist/waitlist.service'
+import { processPendingWaitlists, WaitlistProcessResult } from '../waitlist/waitlist.service'
 import { consume as membershipConsume } from '../membership/membership.service'
 import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
 import { SessionStartReminderParams, SessionCancelledParams } from '../notification/types'
@@ -376,7 +376,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       return { booking: updatedBooking, membership: membershipResult }
     })
 
-    let waitlistResults: Array<{ waitlistId: number; bookingId: number; message: string }> = []
+    let waitlistResults: WaitlistProcessResult[] = []
     if (shouldProcessWaitlist) {
       waitlistResults = await processPendingWaitlists(existingBooking.sessionId)
     }
@@ -499,7 +499,7 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
       )
     })
 
-    const waitlistResults = await processPendingWaitlists(existingBooking.sessionId)
+    const waitlistResults: WaitlistProcessResult[] = await processPendingWaitlists(existingBooking.sessionId)
 
     try {
       if (bookingWithDetails?.session && bookingWithDetails?.customer) {

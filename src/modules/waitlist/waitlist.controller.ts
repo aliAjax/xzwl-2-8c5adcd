@@ -164,9 +164,16 @@ export const processWaitlistHandler = async (
   try {
     const { sessionId } = req.params
     const results = await processPendingWaitlists(sessionId)
+    const successCount = results.filter(r => r.success).length
+    const skippedCount = results.filter(r => !r.success).length
     res.sendSuccess(
-      { processedCount: results.length, convertedWaitlists: results },
-      `处理完成，共转正 ${results.length} 个候补`
+      { 
+        totalProcessed: results.length, 
+        successCount,
+        skippedCount,
+        convertedWaitlists: results 
+      },
+      `处理完成，成功转正 ${successCount} 个候补，跳过 ${skippedCount} 个`
     )
   } catch (error) {
     next(error)

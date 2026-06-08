@@ -3,6 +3,7 @@ import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
 import { SessionStatus, NotificationType, NotificationChannel, NotificationStatus, BookingStatus, WaitlistStatus } from '@prisma/client'
+import { processPendingWaitlists, WaitlistProcessResult } from '../waitlist/waitlist.service'
 import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
   sessionSchema,
@@ -656,11 +657,25 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
       })
     }
 
+    let waitlistResults: WaitlistProcessResult[] = []
+    const maxPlayersIncreased = maxPlayers !== undefined && maxPlayers > existingSession.maxPlayers
+    if (maxPlayersIncreased && session.status !== SessionStatus.CANCELLED && session.status !== SessionStatus.COMPLETED) {
+      waitlistResults = await processPendingWaitlists(id)
+    }
+
     const responseData = cancellationResult
       ? { ...session, cancellationResult }
+      : maxPlayersIncreased
+      ? { ...session, waitlistProcessed: waitlistResults.filter(r => r.success).length, convertedWaitlists: waitlistResults }
       : session
 
-    res.sendSuccess(responseData, statusChangedToCancelled ? '场次取消成功' : '场次更新成功')
+    const successMessage = statusChangedToCancelled
+      ? '场次取消成功'
+      : maxPlayersIncreased
+      ? `场次更新成功，已处理 ${waitlistResults.filter(r => r.success).length} 个候补补位`
+      : '场次更新成功'
+
+    res.sendSuccess(responseData, successMessage)
   } catch (error) {
     next(error)
   }

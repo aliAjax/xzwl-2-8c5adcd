@@ -111,12 +111,37 @@ const confirmWaitlistToBookingInternal = async (
     return { success: false, message: '场次已取消，候补已过期' }
   }
 
+  if (waitlist.session.status === 'COMPLETED') {
+    await tx.waitlist.update({
+      where: { id: waitlistId },
+      data: { status: WaitlistStatus.EXPIRED },
+    })
+    return { success: false, message: '场次已完成，候补已过期' }
+  }
+
   const session = await tx.session.findUnique({
     where: { id: waitlist.sessionId },
   })
 
   if (!session) {
     throw new AppError('场次不存在', 404)
+  }
+
+  const hasActiveBooking = await tx.booking.findFirst({
+    where: {
+      customerId: waitlist.customerId,
+      sessionId: waitlist.sessionId,
+      status: {
+        notIn: [BookingStatus.CANCELLED],
+      },
+    },
+  })
+  if (hasActiveBooking) {
+    await tx.waitlist.update({
+      where: { id: waitlistId },
+      data: { status: WaitlistStatus.CANCELLED, remark: '顾客已存在有效预约，候补自动取消' },
+    })
+    return { success: false, message: '顾客已存在同场次有效预约，候补已取消' }
   }
 
   validatePlayerCount(session.currentPlayers, session.maxPlayers, waitlist.playerCount)
@@ -204,10 +229,35 @@ export const confirmWaitlistToBooking = async (
   })
 }
 
+export interface WaitlistProcessResult {
+  waitlistId: number
+  bookingId?: number
+  success: boolean
+  message: string
+  skippedReason?: string
+}
+
+const checkCustomerHasActiveBooking = async (
+  tx: Prisma.TransactionClient,
+  customerId: number,
+  sessionId: number
+): Promise<boolean> => {
+  const existingBooking = await tx.booking.findFirst({
+    where: {
+      customerId,
+      sessionId,
+      status: {
+        notIn: [BookingStatus.CANCELLED],
+      },
+    },
+  })
+  return !!existingBooking
+}
+
 export const processPendingWaitlists = async (
   sessionId: number
-): Promise<Array<{ waitlistId: number; bookingId: number; message: string }>> => {
-  const results: Array<{ waitlistId: number; bookingId: number; message: string }> = []
+): Promise<WaitlistProcessResult[]> => {
+  const results: WaitlistProcessResult[] = []
 
   await prisma.$transaction(async (tx) => {
     const session = await tx.session.findUnique({
@@ -215,6 +265,32 @@ export const processPendingWaitlists = async (
     })
 
     if (!session) {
+      results.push({
+        waitlistId: 0,
+        success: false,
+        message: '场次不存在',
+        skippedReason: 'SESSION_NOT_FOUND',
+      })
+      return
+    }
+
+    if (session.status === 'CANCELLED') {
+      results.push({
+        waitlistId: 0,
+        success: false,
+        message: '场次已取消，无需处理候补',
+        skippedReason: 'SESSION_CANCELLED',
+      })
+      return
+    }
+
+    if (session.status === 'COMPLETED') {
+      results.push({
+        waitlistId: 0,
+        success: false,
+        message: '场次已完成，无需处理候补',
+        skippedReason: 'SESSION_COMPLETED',
+      })
       return
     }
 
@@ -226,21 +302,78 @@ export const processPendingWaitlists = async (
       orderBy: { createdAt: 'asc' },
     })
 
+    if (pendingWaitlists.length === 0) {
+      results.push({
+        waitlistId: 0,
+        success: false,
+        message: '没有待处理的候补记录',
+        skippedReason: 'NO_PENDING_WAITLISTS',
+      })
+      return
+    }
+
     for (const waitlist of pendingWaitlists) {
       const currentSession = await tx.session.findUnique({
         where: { id: sessionId },
       })
       if (!currentSession) {
+        results.push({
+          waitlistId: waitlist.id,
+          success: false,
+          message: '场次不存在',
+          skippedReason: 'SESSION_NOT_FOUND',
+        })
+        break
+      }
+
+      if (currentSession.status === 'CANCELLED' || currentSession.status === 'COMPLETED') {
+        results.push({
+          waitlistId: waitlist.id,
+          success: false,
+          message: '场次已取消或已完成',
+          skippedReason: 'SESSION_ENDED',
+        })
         break
       }
 
       const remainingSlots = currentSession.maxPlayers - currentSession.currentPlayers
       if (remainingSlots <= 0) {
+        results.push({
+          waitlistId: waitlist.id,
+          success: false,
+          message: '场次已满，无剩余座位',
+          skippedReason: 'NO_REMAINING_SLOTS',
+        })
         break
       }
 
       if (waitlist.playerCount > remainingSlots) {
-        break
+        results.push({
+          waitlistId: waitlist.id,
+          success: false,
+          message: `候补人数 ${waitlist.playerCount} 超过剩余座位 ${remainingSlots}，跳过`,
+          skippedReason: 'INSUFFICIENT_SLOTS',
+        })
+        continue
+      }
+
+      const hasActiveBooking = await checkCustomerHasActiveBooking(
+        tx,
+        waitlist.customerId,
+        sessionId
+      )
+      if (hasActiveBooking) {
+        await tx.waitlist.update({
+          where: { id: waitlist.id },
+          data: { status: WaitlistStatus.CANCELLED, remark: '顾客已存在有效预约，候补自动取消' },
+        })
+        results.push({
+          waitlistId: waitlist.id,
+          success: false,
+          message: '顾客已存在同场次有效预约，候补已取消',
+          skippedReason: 'CUSTOMER_HAS_ACTIVE_BOOKING',
+        })
+        continue
       }
 
       try {
@@ -249,10 +382,24 @@ export const processPendingWaitlists = async (
           results.push({
             waitlistId: waitlist.id,
             bookingId: result.bookingId,
+            success: true,
             message: result.message,
+          })
+        } else {
+          results.push({
+            waitlistId: waitlist.id,
+            success: false,
+            message: result.message,
+            skippedReason: 'CONFIRMATION_FAILED',
           })
         }
       } catch (error) {
+        results.push({
+          waitlistId: waitlist.id,
+          success: false,
+          message: error instanceof Error ? error.message : '处理失败',
+          skippedReason: 'ERROR',
+        })
         continue
       }
     }
