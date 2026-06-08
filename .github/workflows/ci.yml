@@ -69,17 +69,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      - name: Cache Prisma generated client
-        id: cache-prisma
-        uses: actions/cache@v4
-        with:
-          path: node_modules/.prisma
-          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-prisma-
-
       - name: Install dependencies
         run: npm ci
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
       - name: Validate Prisma schema
         run: npm run prisma:validate
@@ -157,14 +151,6 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
-
-      - name: Restore Prisma generated client
-        uses: actions/cache@v4
-        with:
-          path: node_modules/.prisma
-          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-prisma-
 
       - name: Install dependencies
         run: npm ci

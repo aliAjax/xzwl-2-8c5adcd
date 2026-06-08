@@ -80,14 +80,40 @@ const waitForDatabase = (compose) => {
   process.exit(1);
 };
 
+const createShadowDatabase = (compose) => {
+  const [cmd, baseArgs] = compose;
+  const result = spawnSync(
+    cmd,
+    [
+      ...baseArgs,
+      '-f',
+      composeFile,
+      'exec',
+      '-T',
+      service,
+      'sh',
+      '-c',
+      'createdb -U postgres xzwl_shadow 2>/dev/null || true',
+    ],
+    { stdio: 'inherit' }
+  );
+
+  if (result.status !== 0) {
+    process.exit(result.status || 1);
+  }
+};
+
 const compose = resolveCompose();
 
 if (command === 'up') {
   runCompose(compose, ['up', '-d']);
   waitForDatabase(compose);
+  createShadowDatabase(compose);
+} else if (command === 'shadow') {
+  createShadowDatabase(compose);
 } else if (command === 'down') {
   runCompose(compose, ['down', '-v']);
 } else {
-  console.error('Usage: node scripts/test-db.js <up|down>');
+  console.error('Usage: node scripts/test-db.js <up|shadow|down>');
   process.exit(1);
 }
