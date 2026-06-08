@@ -32,6 +32,7 @@ interface OccupiedSlot {
   roomId: number
   startTime: Date
   endTime: Date
+  hasConflict: boolean
 }
 
 const proficiencyPriority: Record<ProficiencyLevel, number> = {
@@ -70,6 +71,7 @@ const checkConflictSilent = async (
   const draftConflicts = occupiedSlots.filter(slot => {
     const slotId = type === 'host' ? slot.hostId : slot.roomId
     if (slotId !== id) return false
+    if (slot.hasConflict) return false
     return startTime < slot.endTime && endTime > slot.startTime
   })
 
@@ -211,7 +213,7 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
     ...hs.host,
     maxDailySessions: hs.host.maxDailySessions,
   }))
-  const occupiedSlots: OccupiedSlot[] = [...existingSessions]
+  const occupiedSlots: OccupiedSlot[] = existingSessions.map(s => ({ ...s, hasConflict: false }))
   const draftCandidates: DraftSessionCandidate[] = []
   const unassignableSlots: { startTime: Date; endTime: Date; roomId: number; reason: string }[] = []
 
@@ -298,14 +300,13 @@ export const generateScheduleDrafts = async (params: GenerateScheduleParams) => 
         }
 
         if (bestCandidate) {
-          if (!bestCandidate.conflictInfo) {
-            occupiedSlots.push({
-              hostId: bestCandidate.hostId,
-              roomId: bestCandidate.roomId,
-              startTime: bestCandidate.startTime,
-              endTime: bestCandidate.endTime,
-            })
-          }
+          occupiedSlots.push({
+            hostId: bestCandidate.hostId,
+            roomId: bestCandidate.roomId,
+            startTime: bestCandidate.startTime,
+            endTime: bestCandidate.endTime,
+            hasConflict: bestCandidate.conflictInfo !== undefined,
+          })
           draftCandidates.push(bestCandidate)
           dayStartTime = new Date(bestCandidate.endTime.getTime() + sessionGapMinutes * 60 * 1000)
         } else {
