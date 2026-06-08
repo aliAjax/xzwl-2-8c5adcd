@@ -14,6 +14,8 @@ import {
   cleanupNotificationTasks,
   generatePhone,
 } from './helpers';
+import { createBookingWithSessionUpdate } from '../src/modules/booking/booking.service';
+import { consume } from '../src/modules/membership/membership.service';
 import {
   createNotificationTask,
   generateIdempotencyKey,
@@ -28,6 +30,35 @@ import {
 describe('Notification Idempotency Key Prevention', () => {
   let testData: TestDataIds;
   let idempotencyKeys: string[] = [];
+
+  const createTestBooking = async (playerCount = 1): Promise<number> => {
+    return prisma.$transaction(async (tx) => {
+      const booking = await createBookingWithSessionUpdate(tx, {
+        sessionId: testData.sessionId,
+        customerId: testData.customerId,
+        playerCount,
+        status: BookingStatus.CONFIRMED,
+      });
+      return booking.id;
+    });
+  };
+
+  const createTestTransaction = async (
+    amount = new Prisma.Decimal('100.00')
+  ): Promise<number> => {
+    const result = await prisma.$transaction(async (tx) => {
+      return consume(
+        tx,
+        testData.customerId,
+        amount,
+        'test-operator',
+        '幂等通知测试消费',
+        undefined,
+        testData.storeId
+      );
+    });
+    return result.transaction.id;
+  };
 
   beforeEach(async () => {
     testData = await createFullTestEnvironment({
@@ -67,9 +98,10 @@ describe('Notification Idempotency Key Prevention', () => {
 
   describe('createNotificationTask idempotency', () => {
     it('should return existing task when same idempotency key is used', async () => {
+      const bookingId = await createTestBooking();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.SESSION_START_REMINDER,
-        'booking:test-1'
+        `booking:${bookingId}`
       );
       idempotencyKeys.push(idempotencyKey);
 
@@ -95,7 +127,7 @@ describe('Notification Idempotency Key Prevention', () => {
         templateCode: 'SESSION_START_REMINDER',
         templateParams,
         idempotencyKey,
-        relatedBookingId: 1,
+        relatedBookingId: bookingId,
         relatedSessionId: testData.sessionId,
         relatedCustomerId: testData.customerId,
       });
@@ -107,7 +139,7 @@ describe('Notification Idempotency Key Prevention', () => {
         templateCode: 'SESSION_START_REMINDER',
         templateParams,
         idempotencyKey,
-        relatedBookingId: 1,
+        relatedBookingId: bookingId,
         relatedSessionId: testData.sessionId,
         relatedCustomerId: testData.customerId,
       });
@@ -120,8 +152,10 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should create separate tasks for different idempotency keys', async () => {
-      const key1 = generateIdempotencyKey(NotificationType.SESSION_START_REMINDER, 'booking:1');
-      const key2 = generateIdempotencyKey(NotificationType.SESSION_START_REMINDER, 'booking:2');
+      const bookingId1 = await createTestBooking();
+      const bookingId2 = await createTestBooking();
+      const key1 = generateIdempotencyKey(NotificationType.SESSION_START_REMINDER, `booking:${bookingId1}`);
+      const key2 = generateIdempotencyKey(NotificationType.SESSION_START_REMINDER, `booking:${bookingId2}`);
       idempotencyKeys.push(key1, key2);
 
       const templateParams: SessionStartReminderParams = {
@@ -146,7 +180,7 @@ describe('Notification Idempotency Key Prevention', () => {
         templateCode: 'SESSION_START_REMINDER',
         templateParams,
         idempotencyKey: key1,
-        relatedBookingId: 1,
+        relatedBookingId: bookingId1,
         relatedSessionId: testData.sessionId,
         relatedCustomerId: testData.customerId,
       });
@@ -158,7 +192,7 @@ describe('Notification Idempotency Key Prevention', () => {
         templateCode: 'SESSION_START_REMINDER',
         templateParams,
         idempotencyKey: key2,
-        relatedBookingId: 2,
+        relatedBookingId: bookingId2,
         relatedSessionId: testData.sessionId,
         relatedCustomerId: testData.customerId,
       });
@@ -171,14 +205,15 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should handle concurrent calls with same idempotency key correctly', async () => {
+      const transactionId = await createTestTransaction();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.MEMBERSHIP_BALANCE_CHANGE,
-        'transaction:concurrent-1'
+        `transaction:${transactionId}`
       );
       idempotencyKeys.push(idempotencyKey);
 
       const templateParams: MembershipBalanceChangeParams = {
-        transactionId: 1,
+        transactionId,
         type: 'CONSUME',
         amount: '100.00',
         balanceAfter: '400.00',
@@ -199,7 +234,7 @@ describe('Notification Idempotency Key Prevention', () => {
           templateCode: 'MEMBERSHIP_BALANCE_CHANGE',
           templateParams,
           idempotencyKey,
-          relatedTransactionId: 1,
+          relatedTransactionId: transactionId,
           relatedCustomerId: testData.customerId,
         })
       );
@@ -215,6 +250,7 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should work correctly within a transaction', async () => {
+      const bookingId = await createTestBooking();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.WAITLIST_CONFIRMED,
         'waitlist:tx-test-1'
@@ -223,7 +259,7 @@ describe('Notification Idempotency Key Prevention', () => {
 
       const templateParams: WaitlistConfirmedParams = {
         waitlistId: 1,
-        bookingId: 1,
+        bookingId,
         scriptName: 'Test Script',
         hostName: 'Test Host',
         roomName: 'Test Room',
@@ -245,7 +281,7 @@ describe('Notification Idempotency Key Prevention', () => {
           templateCode: 'WAITLIST_CONFIRMED',
           templateParams,
           idempotencyKey,
-          relatedBookingId: 1,
+          relatedBookingId: bookingId,
           relatedSessionId: testData.sessionId,
           relatedCustomerId: testData.customerId,
         }, tx);
@@ -257,7 +293,7 @@ describe('Notification Idempotency Key Prevention', () => {
           templateCode: 'WAITLIST_CONFIRMED',
           templateParams,
           idempotencyKey,
-          relatedBookingId: 1,
+          relatedBookingId: bookingId,
           relatedSessionId: testData.sessionId,
           relatedCustomerId: testData.customerId,
         }, tx);
@@ -274,7 +310,7 @@ describe('Notification Idempotency Key Prevention', () => {
 
   describe('Idempotency across notification types', () => {
     it('should prevent duplicate SESSION_START_REMINDER notifications', async () => {
-      const bookingId = 1001;
+      const bookingId = await createTestBooking();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.SESSION_START_REMINDER,
         `booking:${bookingId}`
@@ -321,7 +357,7 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should prevent duplicate SESSION_CANCELLED notifications', async () => {
-      const bookingId = 1002;
+      const bookingId = await createTestBooking();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.SESSION_CANCELLED,
         `booking:${bookingId}`
@@ -371,6 +407,7 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should prevent duplicate WAITLIST_CONFIRMED notifications', async () => {
+      const bookingId = await createTestBooking();
       const waitlistId = 2001;
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.WAITLIST_CONFIRMED,
@@ -380,7 +417,7 @@ describe('Notification Idempotency Key Prevention', () => {
 
       const templateParams: WaitlistConfirmedParams = {
         waitlistId,
-        bookingId: 1003,
+        bookingId,
         scriptName: 'Test Script',
         hostName: 'Test Host',
         roomName: 'Test Room',
@@ -403,7 +440,7 @@ describe('Notification Idempotency Key Prevention', () => {
             templateCode: 'WAITLIST_CONFIRMED',
             templateParams,
             idempotencyKey,
-            relatedBookingId: 1003,
+            relatedBookingId: bookingId,
             relatedSessionId: testData.sessionId,
             relatedCustomerId: testData.customerId,
           }, tx);
@@ -415,7 +452,7 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should prevent duplicate MEMBERSHIP_BALANCE_CHANGE notifications', async () => {
-      const transactionId = 3001;
+      const transactionId = await createTestTransaction(new Prisma.Decimal('150.00'));
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.MEMBERSHIP_BALANCE_CHANGE,
         `transaction:${transactionId}`
@@ -457,14 +494,15 @@ describe('Notification Idempotency Key Prevention', () => {
       const notification = await prisma.notificationTask.findUnique({
         where: { idempotencyKey },
       });
-      expect((notification?.templateParams as MembershipBalanceChangeParams).type).toBe('CONSUME');
-      expect((notification?.templateParams as MembershipBalanceChangeParams).amount).toBe('150.00');
+      const params = notification?.templateParams as unknown as MembershipBalanceChangeParams;
+      expect(params.type).toBe('CONSUME');
+      expect(params.amount).toBe('150.00');
     });
   });
 
   describe('Idempotency in real business scenarios', () => {
     it('should not create duplicate notifications when booking creation is retried', async () => {
-      const bookingId = 5001;
+      const bookingId = await createTestBooking();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.SESSION_START_REMINDER,
         `booking:${bookingId}`
@@ -519,7 +557,7 @@ describe('Notification Idempotency Key Prevention', () => {
     });
 
     it('should handle different notification types for same booking independently', async () => {
-      const bookingId = 5002;
+      const bookingId = await createTestBooking();
       const startKey = generateIdempotencyKey(
         NotificationType.SESSION_START_REMINDER,
         `booking:${bookingId}`
@@ -595,6 +633,7 @@ describe('Notification Idempotency Key Prevention', () => {
 
   describe('Database unique constraint enforcement', () => {
     it('should enforce unique idempotency key at database level', async () => {
+      const bookingId = await createTestBooking();
       const idempotencyKey = generateIdempotencyKey(
         NotificationType.SESSION_START_REMINDER,
         'db-constraint-test'
@@ -627,7 +666,7 @@ describe('Notification Idempotency Key Prevention', () => {
           templateCode: 'SESSION_START_REMINDER',
           templateParams: templateParams as unknown as Prisma.JsonObject,
           maxSendCount: 3,
-          relatedBookingId: 1,
+          relatedBookingId: bookingId,
           relatedSessionId: testData.sessionId,
           relatedCustomerId: testData.customerId,
         },
@@ -645,7 +684,7 @@ describe('Notification Idempotency Key Prevention', () => {
             templateCode: 'SESSION_START_REMINDER',
             templateParams: templateParams as unknown as Prisma.JsonObject,
             maxSendCount: 3,
-            relatedBookingId: 1,
+            relatedBookingId: bookingId,
             relatedSessionId: testData.sessionId,
             relatedCustomerId: testData.customerId,
           },

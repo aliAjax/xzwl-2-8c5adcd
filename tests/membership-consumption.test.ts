@@ -143,22 +143,21 @@ describe('Membership Consumption and Transaction Records', () => {
     });
 
     it('should create transaction with booking association when using consumeWithBooking', async () => {
-      let bookingId: number;
-      await prisma.$transaction(async (tx) => {
+      const bookingId = await prisma.$transaction(async (tx) => {
         const booking = await createBookingWithSessionUpdate(tx, {
           sessionId: testData.sessionId,
           customerId: testData.customerId,
           playerCount: 2,
           status: BookingStatus.PENDING,
         });
-        bookingId = booking.id;
+        return booking.id;
       });
 
       const consumeAmount = new Prisma.Decimal('200.00');
       const result = await prisma.$transaction(async (tx) => {
         return await consumeWithBooking(
           tx,
-          bookingId!,
+          bookingId,
           testData.customerId,
           consumeAmount,
           testData.storeId,

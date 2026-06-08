@@ -15,12 +15,12 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:db:up": "docker compose -f docker-compose.test.yml up -d && echo \"Waiting for database...\" && timeout 30 sh -c 'until docker compose -f docker-compose.test.yml exec -T postgres-test pg_isready -U postgres -d xzwl_test; do sleep 1; done' && echo \"Database ready!\"",
-    "test:db:down": "docker compose -f docker-compose.test.yml down -v",
+    "test:db:up": "node scripts/test-db.js up",
+    "test:db:down": "node scripts/test-db.js down",
     "test:db:migrate": "dotenv -e .env.test -- npx prisma db push --skip-generate",
     "test:db:reset": "dotenv -e .env.test -- npx prisma migrate reset --force --skip-seed",
-    "test:all": "npm run test:db:up && npm run test:db:migrate && npm run test; npm run test:db:down",
-    "test:ci": "npm run test:db:up && npm run test:db:migrate && npm run test -- --ci && npm run test:db:down"
+    "test:all": "npm run test:db:up && npm run test:db:migrate && npm run test; status=$?; npm run test:db:down; exit $status",
+    "test:ci": "npm run test:db:up && npm run test:db:migrate && npm run test -- --ci; status=$?; npm run test:db:down; exit $status"
   },
   "keywords": [
     "script-kill",
