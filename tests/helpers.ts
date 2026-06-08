@@ -1,5 +1,9 @@
-import { Prisma, PrismaClient, Difficulty, ProficiencyLevel } from '@prisma/client';
+import { Prisma, PrismaClient, Difficulty } from '@prisma/client';
 import prisma from '../src/prisma/client';
+
+export type PrismaClientLike = PrismaClient;
+
+export const prismaClient = prisma;
 
 export interface TestDataIds {
   storeId: number;

@@ -3,17 +3,33 @@ version: '3.8'
 services:
   postgres-test:
     image: postgres:16-alpine
+    container_name: xzwl-test-db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: xzwl_test
+      TZ: Asia/Shanghai
     ports:
       - "5433:5432"
-    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off"]
+    command: >
+      postgres
+      -c fsync=off
+      -c full_page_writes=off
+      -c log_statement=none
+      -c shared_buffers=128MB
+      -c max_connections=100
     tmpfs:
-      - /var/lib/postgresql/data
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=256m
+    restart: "no"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
+      test: ["CMD-SHELL", "pg_isready -U postgres -d xzwl_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+      start_period: 2s
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
