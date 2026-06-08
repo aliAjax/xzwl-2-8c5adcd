@@ -503,3 +503,257 @@ export const tryCreateNotificationForEventIsolated = async <T extends EventType>
     return null
   }
 }
+
+export const tryCreateSessionStartReminderForBooking = async (
+  bookingId: number
+): Promise<NotificationTaskWithRelations | null> => {
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        session: {
+          include: { script: true, host: true, room: true }
+        },
+        customer: true
+      }
+    })
+
+    if (!booking?.session || !booking.customer) return null
+
+    return await tryCreateNotificationForEventIsolated(
+      { type: 'SESSION_START_REMINDER', bookingId },
+      {
+        recipient: {
+          name: booking.customer.name,
+          phone: booking.customer.phone
+        },
+        templateParams: {
+          sessionId: booking.session.id,
+          scriptName: booking.session.script.name,
+          hostName: booking.session.host?.name || '',
+          roomName: booking.session.room?.name || '',
+          startTime: booking.session.startTime.toLocaleString('zh-CN'),
+          playerCount: booking.playerCount
+        },
+        storeId: booking.session.storeId,
+        relatedBookingId: booking.id,
+        relatedSessionId: booking.session.id,
+        relatedCustomerId: booking.customerId
+      }
+    )
+  } catch (error) {
+    console.error(`[Notification] Failed to prepare session start reminder for booking ${bookingId}:`, error)
+    return null
+  }
+}
+
+export const tryCreateSessionCancelledForBooking = async (
+  bookingId: number,
+  tx?: Prisma.TransactionClient,
+  options: { relatedBookingId?: number } = { relatedBookingId: bookingId }
+): Promise<NotificationTaskWithRelations | null> => {
+  try {
+    const client = tx || prisma
+    const booking = await client.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        session: {
+          include: { script: true }
+        },
+        customer: true
+      }
+    })
+
+    if (!booking?.session || !booking.customer) return null
+
+    const event = { type: 'SESSION_CANCELLED' as const, sessionId: booking.session.id, entityType: 'booking' as const, entityId: booking.id }
+    const context = {
+      recipient: {
+        name: booking.customer.name,
+        phone: booking.customer.phone
+      },
+      templateParams: {
+        sessionId: booking.session.id,
+        scriptName: booking.session.script.name,
+        startTime: booking.session.startTime.toLocaleString('zh-CN')
+      },
+      storeId: booking.session.storeId,
+      relatedBookingId: options.relatedBookingId,
+      relatedSessionId: booking.session.id,
+      relatedCustomerId: booking.customerId
+    }
+
+    if (tx) {
+      return await tryCreateNotificationForEvent(event, context, tx)
+    }
+
+    return await tryCreateNotificationForEventIsolated(
+      event,
+      context
+    )
+  } catch (error) {
+    console.error(`[Notification] Failed to prepare session cancellation for booking ${bookingId}:`, error)
+    return null
+  }
+}
+
+export const tryCreateSessionCancelledForParticipants = async (
+  sessionId: number,
+  participants: {
+    bookings?: Array<{
+      id: number
+      customerId: number
+      customer?: { name: string; phone: string } | null
+    }>
+    waitlists?: Array<{
+      id: number
+      customerId: number
+      customer?: { name: string; phone: string } | null
+    }>
+  }
+): Promise<void> => {
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { script: true }
+    })
+
+    if (!session) return
+
+    const templateParams = {
+      sessionId,
+      scriptName: session.script.name,
+      startTime: session.startTime.toLocaleString('zh-CN')
+    }
+
+    for (const booking of participants.bookings || []) {
+      if (!booking.customer) continue
+      await tryCreateNotificationForEventIsolated(
+        { type: 'SESSION_CANCELLED', sessionId, entityType: 'booking', entityId: booking.id },
+        {
+          recipient: {
+            name: booking.customer.name,
+            phone: booking.customer.phone
+          },
+          templateParams,
+          storeId: session.storeId,
+          relatedBookingId: booking.id,
+          relatedSessionId: sessionId,
+          relatedCustomerId: booking.customerId
+        }
+      )
+    }
+
+    for (const waitlist of participants.waitlists || []) {
+      if (!waitlist.customer) continue
+      await tryCreateNotificationForEventIsolated(
+        { type: 'SESSION_CANCELLED', sessionId, entityType: 'waitlist', entityId: waitlist.id },
+        {
+          recipient: {
+            name: waitlist.customer.name,
+            phone: waitlist.customer.phone
+          },
+          templateParams,
+          storeId: session.storeId,
+          relatedSessionId: sessionId,
+          relatedCustomerId: waitlist.customerId
+        }
+      )
+    }
+  } catch (error) {
+    console.error(`[Notification] Failed to prepare session cancellation notifications for session ${sessionId}:`, error)
+  }
+}
+
+export const tryCreateWaitlistConfirmedNotification = async (
+  tx: Prisma.TransactionClient,
+  waitlistId: number,
+  bookingId: number
+): Promise<NotificationTaskWithRelations | null> => {
+  try {
+    const waitlist = await tx.waitlist.findUnique({
+      where: { id: waitlistId },
+      include: {
+        customer: true,
+        session: {
+          include: { script: true, host: true, room: true }
+        }
+      }
+    })
+
+    if (!waitlist?.customer || !waitlist.session) return null
+
+    return await tryCreateNotificationForEvent(
+      { type: 'WAITLIST_CONFIRMED', waitlistId },
+      {
+        recipient: {
+          name: waitlist.customer.name ?? '',
+          phone: waitlist.customer.phone
+        },
+        templateParams: {
+          waitlistId,
+          bookingId,
+          scriptName: waitlist.session.script.name,
+          hostName: waitlist.session.host?.name || '',
+          roomName: waitlist.session.room?.name || '',
+          startTime: waitlist.session.startTime.toLocaleString('zh-CN'),
+          playerCount: waitlist.playerCount
+        },
+        storeId: waitlist.session.storeId,
+        relatedBookingId: bookingId,
+        relatedSessionId: waitlist.sessionId,
+        relatedCustomerId: waitlist.customerId
+      },
+      tx
+    )
+  } catch (error) {
+    console.error(`[Notification] Failed to prepare waitlist confirmation for waitlist ${waitlistId}:`, error)
+    return null
+  }
+}
+
+export const tryCreateMembershipBalanceChangeNotification = async (
+  tx: Prisma.TransactionClient,
+  transactionId: number
+): Promise<NotificationTaskWithRelations | null> => {
+  try {
+    const transaction = await tx.membershipTransaction.findUnique({
+      where: { id: transactionId },
+      include: {
+        account: {
+          include: {
+            customer: true
+          }
+        }
+      }
+    })
+
+    const customer = transaction?.account.customer
+    if (!transaction || !customer) return null
+
+    return await tryCreateNotificationForEvent(
+      { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId },
+      {
+        recipient: {
+          name: customer.name,
+          phone: customer.phone
+        },
+        templateParams: {
+          transactionId,
+          type: transaction.type,
+          amount: transaction.amount.toString(),
+          balanceAfter: transaction.balanceAfter.toString(),
+          remark: transaction.remark || undefined
+        },
+        storeId: transaction.storeId || undefined,
+        relatedCustomerId: transaction.account.customerId,
+        relatedTransactionId: transaction.id,
+        relatedBookingId: transaction.relatedBookingId || undefined
+      },
+      tx
+    )
+  } catch (error) {
+    console.error(`[Notification] Failed to prepare membership balance notification for transaction ${transactionId}:`, error)
+    return null
+  }
+}

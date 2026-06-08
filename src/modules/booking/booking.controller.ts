@@ -23,8 +23,10 @@ import {
 } from './booking.service'
 import { processPendingWaitlists, WaitlistProcessResult } from '../waitlist/waitlist.service'
 import { consume as membershipConsume } from '../membership/membership.service'
-import { tryCreateNotificationForEventIsolated } from '../notification/notification.service'
-import { SessionStartReminderParams, SessionCancelledParams } from '../notification/types'
+import {
+  tryCreateSessionCancelledForBooking,
+  tryCreateSessionStartReminderForBooking
+} from '../notification/notification.service'
 
 const enrichBookingWithMembership = <T extends { customer?: any }>(booking: T): T & { membershipAccount?: MembershipAccountInfo | null } => {
   const result: any = { ...booking }
@@ -116,41 +118,7 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
       response.membershipTransaction = result.membership.transaction
     }
 
-    const bookingWithDetails = await prisma.booking.findUnique({
-      where: { id: result.booking.id },
-      include: {
-        session: {
-          include: { script: true, host: true, room: true, store: true }
-        },
-        customer: true
-      }
-    })
-
-    if (bookingWithDetails?.session && bookingWithDetails?.customer) {
-      const templateParams: Omit<SessionStartReminderParams, 'storeName'> = {
-        sessionId: bookingWithDetails.session.id,
-        scriptName: bookingWithDetails.session.script.name,
-        hostName: bookingWithDetails.session.host?.name || '',
-        roomName: bookingWithDetails.session.room?.name || '',
-        startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
-        playerCount: bookingWithDetails.playerCount,
-      }
-
-      await tryCreateNotificationForEventIsolated(
-        { type: 'SESSION_START_REMINDER', bookingId: result.booking.id },
-        {
-          recipient: {
-            name: bookingWithDetails.customer.name,
-            phone: bookingWithDetails.customer.phone
-          },
-          templateParams,
-          storeId: bookingWithDetails.session.storeId,
-          relatedBookingId: result.booking.id,
-          relatedSessionId: bookingWithDetails.session.id,
-          relatedCustomerId: bookingWithDetails.customerId
-        }
-      )
-    }
+    await tryCreateSessionStartReminderForBooking(result.booking.id)
 
     res.sendSuccess(response, result.membership ? '预约成功，已从会员余额扣款' : '预约成功')
   } catch (error) {
@@ -366,38 +334,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
     }
 
     if (statusChangedToCancelled) {
-      const bookingWithDetails = await prisma.booking.findUnique({
-        where: { id },
-        include: {
-          session: {
-            include: { script: true, store: true }
-          },
-          customer: true
-        }
-      })
-
-      if (bookingWithDetails?.session && bookingWithDetails?.customer) {
-        const templateParams: Omit<SessionCancelledParams, 'storeName'> = {
-          sessionId: bookingWithDetails.session.id,
-          scriptName: bookingWithDetails.session.script.name,
-          startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
-        }
-
-        await tryCreateNotificationForEventIsolated(
-          { type: 'SESSION_CANCELLED', sessionId: bookingWithDetails.session.id, entityType: 'booking', entityId: id },
-          {
-            recipient: {
-              name: bookingWithDetails.customer.name,
-              phone: bookingWithDetails.customer.phone
-            },
-            templateParams,
-            storeId: bookingWithDetails.session.storeId,
-            relatedBookingId: id,
-            relatedSessionId: bookingWithDetails.session.id,
-            relatedCustomerId: bookingWithDetails.customerId
-          }
-        )
-      }
+      await tryCreateSessionCancelledForBooking(id)
     }
 
     const message = result.membership
@@ -448,17 +385,9 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
       throw new AppError('预约不属于该门店', 404)
     }
 
-    const bookingWithDetails = await prisma.booking.findUnique({
-      where: { id },
-      include: {
-        session: {
-          include: { script: true, store: true }
-        },
-        customer: true
-      }
-    })
-
     await prisma.$transaction(async (tx) => {
+      await tryCreateSessionCancelledForBooking(existingBooking.id, tx, { relatedBookingId: undefined })
+
       await deleteBookingWithSessionUpdate(
         tx,
         existingBooking.id,
@@ -468,29 +397,6 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
     })
 
     const waitlistResults: WaitlistProcessResult[] = await processPendingWaitlists(existingBooking.sessionId)
-
-    if (bookingWithDetails?.session && bookingWithDetails?.customer) {
-      const templateParams: Omit<SessionCancelledParams, 'storeName'> = {
-        sessionId: bookingWithDetails.session.id,
-        scriptName: bookingWithDetails.session.script.name,
-        startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
-      }
-
-      await tryCreateNotificationForEventIsolated(
-        { type: 'SESSION_CANCELLED', sessionId: bookingWithDetails.session.id, entityType: 'booking', entityId: id },
-        {
-          recipient: {
-            name: bookingWithDetails.customer.name,
-            phone: bookingWithDetails.customer.phone
-          },
-          templateParams,
-          storeId: bookingWithDetails.session.storeId,
-          relatedBookingId: id,
-          relatedSessionId: bookingWithDetails.session.id,
-          relatedCustomerId: bookingWithDetails.customerId
-        }
-      )
-    }
 
     res.sendSuccess(
       { waitlistProcessed: waitlistResults.length, convertedWaitlists: waitlistResults },

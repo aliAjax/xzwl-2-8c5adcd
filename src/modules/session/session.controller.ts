@@ -13,8 +13,7 @@ import {
   idParamSchema,
   detailQuerySchema,
 } from '../../common/schemas'
-import { tryCreateNotificationForEventIsolated } from '../notification/notification.service'
-import { SessionCancelledParams } from '../notification/types'
+import { tryCreateSessionCancelledForParticipants } from '../notification/notification.service'
 
 type CreateSessionRequest = TypedRequest<
   Record<string, never>,
@@ -554,58 +553,10 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
         expiredWaitlistCount: result.expiredWaitlists.count
       }
 
-      const sessionWithDetails = await prisma.session.findUnique({
-        where: { id },
-        include: {
-          script: true,
-          store: true
-        }
+      await tryCreateSessionCancelledForParticipants(id, {
+        bookings: result.cancelledBookings.bookings,
+        waitlists: result.expiredWaitlists.waitlists
       })
-
-      if (sessionWithDetails) {
-        const templateParams: Omit<SessionCancelledParams, 'storeName'> = {
-          sessionId: id,
-          scriptName: sessionWithDetails.script.name,
-          startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
-        }
-
-        for (const booking of result.cancelledBookings.bookings) {
-          if (booking.customer) {
-            await tryCreateNotificationForEventIsolated(
-              { type: 'SESSION_CANCELLED', sessionId: id, entityType: 'booking', entityId: booking.id },
-              {
-                recipient: {
-                  name: booking.customer.name,
-                  phone: booking.customer.phone
-                },
-                templateParams,
-                storeId: sessionWithDetails.storeId,
-                relatedBookingId: booking.id,
-                relatedSessionId: id,
-                relatedCustomerId: booking.customerId
-              }
-            )
-          }
-        }
-
-        for (const waitlist of result.expiredWaitlists.waitlists) {
-          if (waitlist.customer) {
-            await tryCreateNotificationForEventIsolated(
-              { type: 'SESSION_CANCELLED', sessionId: id, entityType: 'waitlist', entityId: waitlist.id },
-              {
-                recipient: {
-                  name: waitlist.customer.name,
-                  phone: waitlist.customer.phone
-                },
-                templateParams,
-                storeId: sessionWithDetails.storeId,
-                relatedSessionId: id,
-                relatedCustomerId: waitlist.customerId
-              }
-            )
-          }
-        }
-      }
     } else {
       session = await prisma.session.update({
         where: { id },

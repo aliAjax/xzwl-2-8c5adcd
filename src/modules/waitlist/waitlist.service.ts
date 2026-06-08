@@ -6,8 +6,7 @@ import {
   createBookingWithSessionUpdate,
   getOrCreateCustomer,
 } from '../booking/booking.service'
-import { tryCreateNotificationForEvent } from '../notification/notification.service'
-import { WaitlistConfirmedParams } from '../notification/types'
+import { tryCreateWaitlistConfirmedNotification } from '../notification/notification.service'
 
 export interface WaitlistCreateData {
   storeId?: number
@@ -173,39 +172,7 @@ const confirmWaitlistToBookingInternal = async (
     remark: remark ?? waitlist.remark ?? undefined,
   })
 
-  const sessionWithDetails = await tx.session.findUnique({
-    where: { id: waitlist.sessionId },
-    include: { script: true, host: true, room: true, store: true },
-  })
-  if (!sessionWithDetails) {
-    throw new AppError('场次不存在', 404)
-  }
-
-  const templateParams: Omit<WaitlistConfirmedParams, 'storeName'> = {
-    waitlistId: waitlistId,
-    bookingId: booking.id,
-    scriptName: sessionWithDetails.script.name,
-    hostName: sessionWithDetails.host?.name || '',
-    roomName: sessionWithDetails.room?.name || '',
-    startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
-    playerCount: waitlist.playerCount,
-  }
-
-  await tryCreateNotificationForEvent(
-    { type: 'WAITLIST_CONFIRMED', waitlistId },
-    {
-      recipient: {
-        name: waitlist.customer.name ?? '',
-        phone: waitlist.customer.phone,
-      },
-      templateParams,
-      storeId: sessionWithDetails.storeId,
-      relatedBookingId: booking.id,
-      relatedSessionId: waitlist.sessionId,
-      relatedCustomerId: waitlist.customerId,
-    },
-    tx
-  )
+  await tryCreateWaitlistConfirmedNotification(tx, waitlistId, booking.id)
 
   return { success: true, bookingId: booking.id, message: '候补转正成功' }
 }

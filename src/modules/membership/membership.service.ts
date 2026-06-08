@@ -2,8 +2,7 @@ import prisma from "../../prisma/client"
 import { Prisma, MembershipTransactionType, MembershipTransactionStatus } from '@prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 
-import { tryCreateNotificationForEvent } from '../notification/notification.service'
-import { MembershipBalanceChangeParams } from '../notification/types'
+import { tryCreateMembershipBalanceChangeNotification } from '../notification/notification.service'
 
 export interface MembershipTransactionCreateData {
   accountId: number
@@ -148,27 +147,7 @@ export const recharge = async (
     storeId
   )
 
-  if (account.customer) {
-    const templateParams: Omit<MembershipBalanceChangeParams, 'storeName'> = {
-      transactionId: transaction.id,
-      type: "RECHARGE",
-      amount: amount.toString(),
-      balanceAfter: newBalance.toString(),
-      remark,
-    }
-
-    await tryCreateNotificationForEvent(
-      { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
-      {
-        recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateParams,
-        storeId,
-        relatedCustomerId: account.customerId,
-        relatedTransactionId: transaction.id
-      },
-      tx
-    )
-  }
+  await tryCreateMembershipBalanceChangeNotification(tx, transaction.id)
 
   return { account: updatedAccount, transaction }
 }
@@ -213,27 +192,7 @@ export const consume = async (
     storeId
   )
 
-  if (account.customer) {
-    const templateParams: Omit<MembershipBalanceChangeParams, 'storeName'> = {
-      transactionId: transaction.id,
-      type: "CONSUME",
-      amount: amount.toString(),
-      balanceAfter: newBalance.toString(),
-      remark,
-    }
-
-    await tryCreateNotificationForEvent(
-      { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
-      {
-        recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateParams,
-        storeId,
-        relatedCustomerId: account.customerId,
-        relatedTransactionId: transaction.id
-      },
-      tx
-    )
-  }
+  await tryCreateMembershipBalanceChangeNotification(tx, transaction.id)
 
   return { account: updatedAccount, transaction }
 }
@@ -275,27 +234,7 @@ export const refund = async (
     storeId
   )
 
-  if (account.customer) {
-    const templateParams: Omit<MembershipBalanceChangeParams, 'storeName'> = {
-      transactionId: transaction.id,
-      type: "REFUND",
-      amount: amount.toString(),
-      balanceAfter: newBalance.toString(),
-      remark,
-    }
-
-    await tryCreateNotificationForEvent(
-      { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
-      {
-        recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateParams,
-        storeId,
-        relatedCustomerId: account.customerId,
-        relatedTransactionId: transaction.id
-      },
-      tx
-    )
-  }
+  await tryCreateMembershipBalanceChangeNotification(tx, transaction.id)
 
   return { account: updatedAccount, transaction }
 }
@@ -359,28 +298,7 @@ export const consumeWithBooking = async (
     storeId
   )
 
-  if (account.customer) {
-    const templateParams: Omit<MembershipBalanceChangeParams, 'storeName'> = {
-      transactionId: transaction.id,
-      type: 'CONSUME',
-      amount: amount.toString(),
-      balanceAfter: newBalance.toString(),
-      remark,
-    }
-
-    await tryCreateNotificationForEvent(
-      { type: 'MEMBERSHIP_BALANCE_CHANGE', transactionId: transaction.id },
-      {
-        recipient: { name: account.customer.name, phone: account.customer.phone },
-        templateParams,
-        storeId,
-        relatedCustomerId: account.customerId,
-        relatedTransactionId: transaction.id,
-        relatedBookingId: bookingId
-      },
-      tx
-    )
-  }
+  await tryCreateMembershipBalanceChangeNotification(tx, transaction.id)
 
   return { account: updatedAccount, transaction, booking }
 }
