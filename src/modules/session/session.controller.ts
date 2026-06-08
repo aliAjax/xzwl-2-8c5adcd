@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express'
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
-import { SessionStatus, NotificationType, NotificationChannel, NotificationStatus, BookingStatus, WaitlistStatus } from '@prisma/client'
+import { SessionStatus, BookingStatus, WaitlistStatus } from '@prisma/client'
 import { processPendingWaitlists, WaitlistProcessResult } from '../waitlist/waitlist.service'
 import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
@@ -13,7 +13,7 @@ import {
   idParamSchema,
   detailQuerySchema,
 } from '../../common/schemas'
-import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
+import { tryCreateNotificationForEventSafe } from '../notification/notification.service'
 import { SessionCancelledParams } from '../notification/types'
 
 type CreateSessionRequest = TypedRequest<
@@ -554,95 +554,59 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
         expiredWaitlistCount: result.expiredWaitlists.count
       }
 
-      try {
-        const sessionWithDetails = await prisma.session.findUnique({
-          where: { id },
-          include: {
-            script: true,
-            store: true
-          }
-        })
+      const sessionWithDetails = await prisma.session.findUnique({
+        where: { id },
+        include: {
+          script: true,
+          store: true
+        }
+      })
 
-        if (sessionWithDetails) {
-          for (const booking of result.cancelledBookings.bookings) {
-            try {
-              const idempotencyKey = generateIdempotencyKey(
-                NotificationType.SESSION_CANCELLED,
-                `session:${id}:booking:${booking.id}`
-              )
+      if (sessionWithDetails) {
+        const templateParams: Omit<SessionCancelledParams, 'storeName'> = {
+          sessionId: id,
+          scriptName: sessionWithDetails.script.name,
+          startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
+        }
 
-              const existingNotification = await prisma.notificationTask.findUnique({
-                where: { idempotencyKey }
-              })
-
-              if (!existingNotification && booking.customer) {
-                const templateParams: SessionCancelledParams = {
-                  sessionId: id,
-                  scriptName: sessionWithDetails.script.name,
-                  startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
-                  storeName: sessionWithDetails.store?.name
-                }
-
-                await createNotificationTask({
-                  type: NotificationType.SESSION_CANCELLED,
-                  channel: NotificationChannel.SMS,
-                  recipient: {
-                    name: booking.customer.name,
-                    phone: booking.customer.phone
-                  },
-                  templateCode: 'SESSION_CANCELLED',
-                  templateParams,
-                  idempotencyKey,
-                  relatedBookingId: booking.id,
-                  relatedSessionId: id,
-                  relatedCustomerId: booking.customerId
-                })
+        for (const booking of result.cancelledBookings.bookings) {
+          if (booking.customer) {
+            await tryCreateNotificationForEventSafe(
+              { type: 'SESSION_CANCELLED', sessionId: id, entityType: 'booking', entityId: booking.id },
+              {
+                recipient: {
+                  name: booking.customer.name,
+                  phone: booking.customer.phone
+                },
+                templateCode: 'SESSION_CANCELLED',
+                templateParams,
+                storeId: sessionWithDetails.storeId,
+                relatedBookingId: booking.id,
+                relatedSessionId: id,
+                relatedCustomerId: booking.customerId
               }
-            } catch (bookingNotificationError) {
-              console.error(`Failed to create notification for booking ${booking.id}:`, bookingNotificationError)
-            }
-          }
-
-          for (const waitlist of result.expiredWaitlists.waitlists) {
-            try {
-              const idempotencyKey = generateIdempotencyKey(
-                NotificationType.SESSION_CANCELLED,
-                `session:${id}:waitlist:${waitlist.id}`
-              )
-
-              const existingNotification = await prisma.notificationTask.findUnique({
-                where: { idempotencyKey }
-              })
-
-              if (!existingNotification && waitlist.customer) {
-                const templateParams: SessionCancelledParams = {
-                  sessionId: id,
-                  scriptName: sessionWithDetails.script.name,
-                  startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
-                  storeName: sessionWithDetails.store?.name
-                }
-
-                await createNotificationTask({
-                  type: NotificationType.SESSION_CANCELLED,
-                  channel: NotificationChannel.SMS,
-                  recipient: {
-                    name: waitlist.customer.name,
-                    phone: waitlist.customer.phone
-                  },
-                  templateCode: 'SESSION_CANCELLED',
-                  templateParams,
-                  idempotencyKey,
-                  relatedSessionId: id,
-                  relatedCustomerId: waitlist.customerId
-                })
-              }
-            } catch (waitlistNotificationError) {
-              console.error(`Failed to create notification for waitlist ${waitlist.id}:`, waitlistNotificationError)
-            }
+            )
           }
         }
-      } catch (notificationError) {
-        console.error('Failed to create notifications for session cancellation:', notificationError)
+
+        for (const waitlist of result.expiredWaitlists.waitlists) {
+          if (waitlist.customer) {
+            await tryCreateNotificationForEventSafe(
+              { type: 'SESSION_CANCELLED', sessionId: id, entityType: 'waitlist', entityId: waitlist.id },
+              {
+                recipient: {
+                  name: waitlist.customer.name,
+                  phone: waitlist.customer.phone
+                },
+                templateCode: 'SESSION_CANCELLED',
+                templateParams,
+                storeId: sessionWithDetails.storeId,
+                relatedSessionId: id,
+                relatedCustomerId: waitlist.customerId
+              }
+            )
+          }
+        }
       }
     } else {
       session = await prisma.session.update({

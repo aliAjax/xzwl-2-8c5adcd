@@ -6,7 +6,9 @@ import {
   NotificationTaskCreateData,
   NotificationTaskFilter,
   NotificationTaskWithRelations,
-  NotificationTemplateParams
+  NotificationTemplateParams,
+  NotificationBusinessEvent,
+  NotificationEventContext
 } from './types'
 import { renderTemplate } from './templates'
 import { getNotificationSender } from './adapter'
@@ -339,4 +341,114 @@ export const cancelNotificationTask = async (
   })
 
   return updatedTask as NotificationTaskWithRelations
+}
+
+export const buildIdempotencyKeyFromEvent = (
+  event: NotificationBusinessEvent
+): string => {
+  switch (event.type) {
+    case 'SESSION_START_REMINDER':
+      return generateIdempotencyKey(NotificationType.SESSION_START_REMINDER, `booking:${event.bookingId}`)
+    case 'SESSION_CANCELLED':
+      return generateIdempotencyKey(
+        NotificationType.SESSION_CANCELLED,
+        `session:${event.sessionId}:${event.entityType}:${event.entityId}`
+      )
+    case 'WAITLIST_CONFIRMED':
+      return generateIdempotencyKey(NotificationType.WAITLIST_CONFIRMED, `waitlist:${event.waitlistId}`)
+    case 'MEMBERSHIP_BALANCE_CHANGE':
+      return generateIdempotencyKey(NotificationType.MEMBERSHIP_BALANCE_CHANGE, `transaction:${event.transactionId}`)
+  }
+}
+
+const getNotificationTypeFromEvent = (event: NotificationBusinessEvent): NotificationType => {
+  switch (event.type) {
+    case 'SESSION_START_REMINDER':
+      return NotificationType.SESSION_START_REMINDER
+    case 'SESSION_CANCELLED':
+      return NotificationType.SESSION_CANCELLED
+    case 'WAITLIST_CONFIRMED':
+      return NotificationType.WAITLIST_CONFIRMED
+    case 'MEMBERSHIP_BALANCE_CHANGE':
+      return NotificationType.MEMBERSHIP_BALANCE_CHANGE
+  }
+}
+
+const getStoreName = async (
+  client: Prisma.TransactionClient | typeof prisma,
+  storeId?: number
+): Promise<string | undefined> => {
+  if (storeId === undefined) return undefined
+  const store = await client.store.findUnique({
+    where: { id: storeId },
+    select: { name: true }
+  })
+  return store?.name
+}
+
+export const createNotificationForEvent = async (
+  event: NotificationBusinessEvent,
+  context: NotificationEventContext,
+  tx?: Prisma.TransactionClient
+): Promise<NotificationTaskWithRelations | null> => {
+  const client = tx || prisma
+  const type = getNotificationTypeFromEvent(event)
+  const idempotencyKey = buildIdempotencyKeyFromEvent(event)
+
+  const existingTask = await client.notificationTask.findUnique({
+    where: { idempotencyKey },
+    include: notificationTaskInclude
+  })
+
+  if (existingTask) {
+    return existingTask as NotificationTaskWithRelations
+  }
+
+  const storeName = await getStoreName(client, context.storeId)
+
+  const templateParams = {
+    ...context.templateParams,
+    storeName
+  } as NotificationTemplateParams
+
+  return createNotificationTask({
+    type,
+    channel: context.channel || NotificationChannel.SMS,
+    recipient: context.recipient,
+    templateCode: context.templateCode,
+    templateParams,
+    idempotencyKey,
+    maxSendCount: context.maxSendCount || 3,
+    relatedBookingId: context.relatedBookingId,
+    relatedSessionId: context.relatedSessionId,
+    relatedCustomerId: context.relatedCustomerId,
+    relatedTransactionId: context.relatedTransactionId
+  }, tx)
+}
+
+export const tryCreateNotificationForEvent = async (
+  event: NotificationBusinessEvent,
+  context: NotificationEventContext,
+  tx?: Prisma.TransactionClient
+): Promise<NotificationTaskWithRelations | null> => {
+  try {
+    return await createNotificationForEvent(event, context, tx)
+  } catch (error) {
+    console.error(`[Notification] Failed to create notification for event ${event.type}:`, error)
+    return null
+  }
+}
+
+export const tryCreateNotificationForEventSafe = async (
+  event: NotificationBusinessEvent,
+  context: NotificationEventContext
+): Promise<NotificationTaskWithRelations | null> => {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      return await createNotificationForEvent(event, context, tx)
+    })
+  } catch (error) {
+    console.error(`[Notification] Failed to create notification for event ${event.type}:`, error)
+    return null
+  }
 }

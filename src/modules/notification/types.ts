@@ -1,5 +1,11 @@
 import { NotificationType, NotificationChannel, NotificationStatus, Prisma } from '@prisma/client'
 
+export type NotificationBusinessEvent =
+  | { type: 'SESSION_START_REMINDER'; bookingId: number }
+  | { type: 'SESSION_CANCELLED'; sessionId: number; entityType: 'booking' | 'waitlist'; entityId: number }
+  | { type: 'WAITLIST_CONFIRMED'; waitlistId: number }
+  | { type: 'MEMBERSHIP_BALANCE_CHANGE'; transactionId: number }
+
 export interface RecipientSnapshot {
   name: string
   phone: string
@@ -87,6 +93,19 @@ export interface NotificationTaskCreateData {
   relatedSessionId?: number
   relatedCustomerId?: number
   relatedTransactionId?: number
+}
+
+export interface NotificationEventContext {
+  recipient: RecipientSnapshot
+  templateParams: Omit<NotificationTemplateParams, 'storeName'>
+  templateCode: string
+  storeId?: number
+  relatedBookingId?: number
+  relatedSessionId?: number
+  relatedCustomerId?: number
+  relatedTransactionId?: number
+  maxSendCount?: number
+  channel?: NotificationChannel
 }
 
 export interface NotificationTaskFilter {

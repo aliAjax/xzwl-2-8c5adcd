@@ -1,12 +1,12 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { WaitlistStatus, BookingStatus, Prisma, NotificationType, NotificationChannel, NotificationStatus } from '@prisma/client'
+import { WaitlistStatus, BookingStatus, Prisma } from '@prisma/client'
 import {
   validatePlayerCount,
   createBookingWithSessionUpdate,
   getOrCreateCustomer,
 } from '../booking/booking.service'
-import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
+import { tryCreateNotificationForEvent } from '../notification/notification.service'
 import { WaitlistConfirmedParams } from '../notification/types'
 
 export interface WaitlistCreateData {
@@ -181,7 +181,7 @@ const confirmWaitlistToBookingInternal = async (
     throw new AppError('场次不存在', 404)
   }
 
-  const templateParams: WaitlistConfirmedParams = {
+  const templateParams: Omit<WaitlistConfirmedParams, 'storeName'> = {
     waitlistId: waitlistId,
     bookingId: booking.id,
     scriptName: sessionWithDetails.script.name,
@@ -189,26 +189,24 @@ const confirmWaitlistToBookingInternal = async (
     roomName: sessionWithDetails.room?.name || '',
     startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
     playerCount: waitlist.playerCount,
-    storeName: sessionWithDetails.store?.name,
   }
-  const idempotencyKey = generateIdempotencyKey(
-    NotificationType.WAITLIST_CONFIRMED,
-    `waitlist:${waitlistId}`
-  )
-  await createNotificationTask({
-    type: NotificationType.WAITLIST_CONFIRMED,
-    channel: NotificationChannel.SMS,
-    recipient: {
-      name: waitlist.customer.name ?? '',
-      phone: waitlist.customer.phone,
+
+  await tryCreateNotificationForEvent(
+    { type: 'WAITLIST_CONFIRMED', waitlistId },
+    {
+      recipient: {
+        name: waitlist.customer.name ?? '',
+        phone: waitlist.customer.phone,
+      },
+      templateCode: 'WAITLIST_CONFIRMED',
+      templateParams,
+      storeId: sessionWithDetails.storeId,
+      relatedBookingId: booking.id,
+      relatedSessionId: waitlist.sessionId,
+      relatedCustomerId: waitlist.customerId,
     },
-    templateCode: 'WAITLIST_CONFIRMED',
-    templateParams,
-    idempotencyKey,
-    relatedBookingId: booking.id,
-    relatedSessionId: waitlist.sessionId,
-    relatedCustomerId: waitlist.customerId,
-  }, tx)
+    tx
+  )
 
   return { success: true, bookingId: booking.id, message: '候补转正成功' }
 }
