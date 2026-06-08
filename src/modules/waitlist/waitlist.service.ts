@@ -8,6 +8,7 @@ import {
 } from '../booking/booking.service'
 import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
 import { WaitlistConfirmedParams } from '../notification/types'
+
 export interface WaitlistCreateData {
   storeId?: number
   sessionId: number
@@ -88,6 +89,7 @@ const confirmWaitlistToBookingInternal = async (
           store: true,
         },
       },
+      customer: true,
     },
   })
 
@@ -171,24 +173,19 @@ const confirmWaitlistToBookingInternal = async (
     remark: remark ?? waitlist.remark ?? undefined,
   })
 
-
   const sessionWithDetails = await tx.session.findUnique({
     where: { id: waitlist.sessionId },
     include: { script: true, host: true, room: true, store: true },
   })
-  const waitlistWithCustomer = await tx.waitlist.findUnique({
-    where: { id: waitlistId },
-    include: { customer: true },
-  })
-  if (sessionWithDetails && waitlistWithCustomer?.customer) {
+  if (sessionWithDetails) {
     try {
       const templateParams: WaitlistConfirmedParams = {
         waitlistId: waitlistId,
         bookingId: booking.id,
         scriptName: sessionWithDetails.script.name,
-        hostName: sessionWithDetails.host?.name || "",
-        roomName: sessionWithDetails.room?.name || "",
-        startTime: sessionWithDetails.startTime.toLocaleString("zh-CN"),
+        hostName: sessionWithDetails.host?.name || '',
+        roomName: sessionWithDetails.room?.name || '',
+        startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
         playerCount: waitlist.playerCount,
         storeName: sessionWithDetails.store?.name,
       }
@@ -200,18 +197,18 @@ const confirmWaitlistToBookingInternal = async (
         type: NotificationType.WAITLIST_CONFIRMED,
         channel: NotificationChannel.SMS,
         recipient: {
-          name: waitlistWithCustomer.customer.name,
-          phone: waitlistWithCustomer.customer.phone,
+          name: waitlist.customer.name ?? '',
+          phone: waitlist.customer.phone,
         },
-        templateCode: "WAITLIST_CONFIRMED",
+        templateCode: 'WAITLIST_CONFIRMED',
         templateParams,
         idempotencyKey,
         relatedBookingId: booking.id,
         relatedSessionId: waitlist.sessionId,
         relatedCustomerId: waitlist.customerId,
-      })
+      }, tx)
     } catch (notificationError) {
-      console.error("Failed to create notification for waitlist confirmation:", notificationError)
+      console.error('Failed to create notification for waitlist confirmation:', notificationError)
     }
   }
 
@@ -235,23 +232,6 @@ export interface WaitlistProcessResult {
   success: boolean
   message: string
   skippedReason?: string
-}
-
-const checkCustomerHasActiveBooking = async (
-  tx: Prisma.TransactionClient,
-  customerId: number,
-  sessionId: number
-): Promise<boolean> => {
-  const existingBooking = await tx.booking.findFirst({
-    where: {
-      customerId,
-      sessionId,
-      status: {
-        notIn: [BookingStatus.CANCELLED],
-      },
-    },
-  })
-  return !!existingBooking
 }
 
 export const processPendingWaitlists = async (
@@ -353,25 +333,6 @@ export const processPendingWaitlists = async (
           success: false,
           message: `候补人数 ${waitlist.playerCount} 超过剩余座位 ${remainingSlots}，跳过`,
           skippedReason: 'INSUFFICIENT_SLOTS',
-        })
-        continue
-      }
-
-      const hasActiveBooking = await checkCustomerHasActiveBooking(
-        tx,
-        waitlist.customerId,
-        sessionId
-      )
-      if (hasActiveBooking) {
-        await tx.waitlist.update({
-          where: { id: waitlist.id },
-          data: { status: WaitlistStatus.CANCELLED, remark: '顾客已存在有效预约，候补自动取消' },
-        })
-        results.push({
-          waitlistId: waitlist.id,
-          success: false,
-          message: '顾客已存在同场次有效预约，候补已取消',
-          skippedReason: 'CUSTOMER_HAS_ACTIVE_BOOKING',
         })
         continue
       }

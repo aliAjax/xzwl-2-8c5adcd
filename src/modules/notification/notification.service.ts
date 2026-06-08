@@ -43,9 +43,12 @@ const notificationTaskInclude = {
 }
 
 export const createNotificationTask = async (
-  data: NotificationTaskCreateData
+  data: NotificationTaskCreateData,
+  tx?: Prisma.TransactionClient
 ): Promise<NotificationTaskWithRelations> => {
-  const existingTask = await prisma.notificationTask.findUnique({
+  const client = tx || prisma
+
+  const existingTask = await client.notificationTask.findUnique({
     where: { idempotencyKey: data.idempotencyKey },
     include: notificationTaskInclude
   })
@@ -54,7 +57,7 @@ export const createNotificationTask = async (
     return existingTask as NotificationTaskWithRelations
   }
 
-  const task = await prisma.notificationTask.create({
+  const task = await client.notificationTask.create({
     data: {
       type: data.type,
       channel: data.channel || NotificationChannel.SMS,
