@@ -114,17 +114,17 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
           customer: true
         }
       })
-      
+
       if (bookingWithDetails?.session && bookingWithDetails?.customer) {
         const idempotencyKey = generateIdempotencyKey(
           NotificationType.SESSION_START_REMINDER,
           `booking:${result.booking.id}`
         )
-        
+
         const existingNotification = await prisma.notificationTask.findUnique({
           where: { idempotencyKey }
         })
-        
+
         if (!existingNotification) {
           const templateParams: SessionStartReminderParams = {
             sessionId: bookingWithDetails.session.id,
@@ -135,7 +135,7 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
             playerCount: bookingWithDetails.playerCount,
             storeName: bookingWithDetails.session.store?.name
           }
-          
+
           await createNotificationTask({
             type: NotificationType.SESSION_START_REMINDER,
             channel: NotificationChannel.SMS,
@@ -369,17 +369,17 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
             customer: true
           }
         })
-        
+
         if (bookingWithDetails?.session && bookingWithDetails?.customer) {
           const idempotencyKey = generateIdempotencyKey(
             NotificationType.SESSION_CANCELLED,
             `booking:${id}`
           )
-          
+
           const existingNotification = await prisma.notificationTask.findUnique({
             where: { idempotencyKey }
           })
-          
+
           if (!existingNotification) {
             const templateParams: SessionCancelledParams = {
               sessionId: bookingWithDetails.session.id,
@@ -387,7 +387,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
               startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
               storeName: bookingWithDetails.session.store?.name
             }
-            
+
             await createNotificationTask({
               type: NotificationType.SESSION_CANCELLED,
               channel: NotificationChannel.SMS,
@@ -484,11 +484,11 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
           NotificationType.SESSION_CANCELLED,
           `booking:${id}`
         )
-        
+
         const existingNotification = await prisma.notificationTask.findUnique({
           where: { idempotencyKey }
         })
-        
+
         if (!existingNotification) {
           const templateParams: SessionCancelledParams = {
             sessionId: bookingWithDetails.session.id,
@@ -496,7 +496,7 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
             startTime: bookingWithDetails.session.startTime.toLocaleString('zh-CN'),
             storeName: bookingWithDetails.session.store?.name
           }
-          
+
           await createNotificationTask({
             type: NotificationType.SESSION_CANCELLED,
             channel: NotificationChannel.SMS,
@@ -507,7 +507,6 @@ export const deleteBooking = async (req: GetBookingByIdRequest, res: Response, n
             templateCode: 'SESSION_CANCELLED',
             templateParams,
             idempotencyKey,
-            relatedBookingId: id,
             relatedSessionId: bookingWithDetails.session.id,
             relatedCustomerId: bookingWithDetails.customerId
           })

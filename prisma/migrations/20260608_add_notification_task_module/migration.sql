@@ -4,36 +4,90 @@ CREATE TYPE "NotificationType" AS ENUM ('SESSION_START_REMINDER', 'SESSION_CANCE
 -- CreateEnum
 CREATE TYPE "NotificationStatus" AS ENUM ('PENDING', 'SENT', 'FAILED', 'RETRYING', 'CANCELLED');
 
--- CreateEnum
+-- Replace the first notification migration's broader channel enum.
+ALTER TYPE "NotificationChannel" RENAME TO "NotificationChannel_old";
 CREATE TYPE "NotificationChannel" AS ENUM ('SMS', 'EMAIL', 'WECHAT');
 
--- CreateTable
-CREATE TABLE "NotificationTask" (
-    "id" SERIAL NOT NULL,
-    "type" "NotificationType" NOT NULL,
-    "channel" "NotificationChannel" NOT NULL DEFAULT 'SMS',
-    "status" "NotificationStatus" NOT NULL DEFAULT 'PENDING',
-    "idempotencyKey" TEXT NOT NULL,
-    "recipientPhone" TEXT NOT NULL,
-    "recipientName" TEXT,
-    "templateCode" TEXT NOT NULL,
-    "templateParams" JSONB NOT NULL,
-    "content" TEXT,
-    "sendCount" INTEGER NOT NULL DEFAULT 0,
-    "maxSendCount" INTEGER NOT NULL DEFAULT 3,
-    "lastSendAt" TIMESTAMP(3),
-    "failedReason" TEXT,
-    "retryAfter" TIMESTAMP(3),
-    "relatedBookingId" INTEGER,
-    "relatedSessionId" INTEGER,
-    "relatedCustomerId" INTEGER,
-    "relatedTransactionId" INTEGER,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-    "sentAt" TIMESTAMP(3),
+-- Drop old indexes and relation before reshaping the table.
+ALTER TABLE "NotificationTask" DROP CONSTRAINT IF EXISTS "NotificationTask_storeId_fkey";
+DROP INDEX IF EXISTS "NotificationTask_idempotencyKey_key";
+DROP INDEX IF EXISTS "NotificationTask_type_idx";
+DROP INDEX IF EXISTS "NotificationTask_status_idx";
+DROP INDEX IF EXISTS "NotificationTask_channel_idx";
+DROP INDEX IF EXISTS "NotificationTask_businessType_businessId_idx";
+DROP INDEX IF EXISTS "NotificationTask_scheduledAt_idx";
+DROP INDEX IF EXISTS "NotificationTask_createdAt_idx";
 
-    CONSTRAINT "NotificationTask_pkey" PRIMARY KEY ("id")
-);
+-- Rename retry/failure fields to match the Prisma model.
+ALTER TABLE "NotificationTask" RENAME COLUMN "failureReason" TO "failedReason";
+ALTER TABLE "NotificationTask" RENAME COLUMN "retryCount" TO "sendCount";
+ALTER TABLE "NotificationTask" RENAME COLUMN "maxRetries" TO "maxSendCount";
+
+-- Add fields used by the final notification task model.
+ALTER TABLE "NotificationTask" ADD COLUMN "recipientPhone" TEXT;
+ALTER TABLE "NotificationTask" ADD COLUMN "recipientName" TEXT;
+ALTER TABLE "NotificationTask" ADD COLUMN "lastSendAt" TIMESTAMP(3);
+ALTER TABLE "NotificationTask" ADD COLUMN "retryAfter" TIMESTAMP(3);
+ALTER TABLE "NotificationTask" ADD COLUMN "relatedBookingId" INTEGER;
+ALTER TABLE "NotificationTask" ADD COLUMN "relatedSessionId" INTEGER;
+ALTER TABLE "NotificationTask" ADD COLUMN "relatedCustomerId" INTEGER;
+ALTER TABLE "NotificationTask" ADD COLUMN "relatedTransactionId" INTEGER;
+
+-- Preserve recipient snapshots from the first version of the table.
+UPDATE "NotificationTask"
+SET
+  "recipientPhone" = COALESCE("recipientSnapshot"->>'phone', ''),
+  "recipientName" = "recipientSnapshot"->>'name";
+
+ALTER TABLE "NotificationTask" ALTER COLUMN "recipientPhone" SET NOT NULL;
+
+-- Convert old notification type/status/channel values to the final enums.
+ALTER TABLE "NotificationTask"
+  ALTER COLUMN "type" TYPE "NotificationType"
+  USING (
+    CASE "type"::text
+      WHEN 'SESSION_OPENING_REMINDER' THEN 'SESSION_START_REMINDER'
+      WHEN 'SESSION_CANCELLATION' THEN 'SESSION_CANCELLED'
+      WHEN 'WAITLIST_CONFIRMATION' THEN 'WAITLIST_CONFIRMED'
+      WHEN 'BALANCE_CHANGE' THEN 'MEMBERSHIP_BALANCE_CHANGE'
+    END
+  )::"NotificationType";
+
+ALTER TABLE "NotificationTask" ALTER COLUMN "status" DROP DEFAULT;
+ALTER TABLE "NotificationTask"
+  ALTER COLUMN "status" TYPE "NotificationStatus"
+  USING (
+    CASE "status"::text
+      WHEN 'PENDING' THEN 'PENDING'
+      WHEN 'SENDING' THEN 'RETRYING'
+      WHEN 'SENT' THEN 'SENT'
+      WHEN 'FAILED' THEN 'FAILED'
+      WHEN 'CANCELLED' THEN 'CANCELLED'
+    END
+  )::"NotificationStatus";
+ALTER TABLE "NotificationTask" ALTER COLUMN "status" SET DEFAULT 'PENDING';
+
+ALTER TABLE "NotificationTask" ALTER COLUMN "channel" DROP DEFAULT;
+ALTER TABLE "NotificationTask"
+  ALTER COLUMN "channel" TYPE "NotificationChannel"
+  USING (
+    CASE "channel"::text
+      WHEN 'PUSH' THEN 'SMS'
+      ELSE "channel"::text
+    END
+  )::"NotificationChannel";
+ALTER TABLE "NotificationTask" ALTER COLUMN "channel" SET DEFAULT 'SMS';
+
+-- Remove fields from the first table shape.
+ALTER TABLE "NotificationTask" DROP COLUMN "storeId";
+ALTER TABLE "NotificationTask" DROP COLUMN "recipientSnapshot";
+ALTER TABLE "NotificationTask" DROP COLUMN "businessType";
+ALTER TABLE "NotificationTask" DROP COLUMN "businessId";
+ALTER TABLE "NotificationTask" DROP COLUMN "scheduledAt";
+
+DROP TYPE "NotificationTaskType";
+DROP TYPE "NotificationTaskStatus";
+DROP TYPE "NotificationChannel_old";
 
 -- CreateIndex
 CREATE UNIQUE INDEX "NotificationTask_idempotencyKey_key" ON "NotificationTask"("idempotencyKey");

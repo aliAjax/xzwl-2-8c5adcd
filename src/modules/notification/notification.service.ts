@@ -84,14 +84,14 @@ export const getNotificationTaskById = async (
     where: { id },
     include: notificationTaskInclude
   })
-  
+
   if (task && storeId !== undefined) {
     const taskStoreId = task.relatedSession?.storeId ?? task.relatedBooking?.session?.storeId
     if (taskStoreId !== storeId) {
       throw new AppError('通知任务不属于该门店', 404)
     }
   }
-  
+
   return task as NotificationTaskWithRelations | null
 }
 
