@@ -17,11 +17,22 @@ import {
   updateBookingPlayerCount,
   deleteBookingWithSessionUpdate,
   getOrCreateCustomer,
+  getActiveMembershipAccount,
+  customerWithMembershipSelect,
+  MembershipAccountInfo,
 } from './booking.service'
 import { processPendingWaitlists } from '../waitlist/waitlist.service'
 import { consume as membershipConsume } from '../membership/membership.service'
 import { createNotificationTask, generateIdempotencyKey } from '../notification/notification.service'
 import { SessionStartReminderParams, SessionCancelledParams } from '../notification/types'
+
+const enrichBookingWithMembership = <T extends { customer?: any }>(booking: T): T & { membershipAccount?: MembershipAccountInfo | null } => {
+  const result: any = { ...booking }
+  if (booking.customer) {
+    result.membershipAccount = getActiveMembershipAccount(booking.customer)
+  }
+  return result
+}
 
 type CreateBookingRequest = TypedRequest<
   Record<string, never>,
@@ -100,9 +111,10 @@ export const createBooking = async (req: CreateBookingRequest, res: Response, ne
       return { booking: newBooking, membership: membershipResult }
     })
 
-    const response = result.membership
-      ? { ...result.booking, membershipTransaction: result.membership.transaction }
-      : result.booking
+    let response: any = enrichBookingWithMembership(result.booking)
+    if (result.membership) {
+      response.membershipTransaction = result.membership.transaction
+    }
 
     try {
       const bookingWithDetails = await prisma.booking.findUnique({
@@ -204,7 +216,7 @@ export const getBookingList = async (req: GetBookingListRequest, res: Response, 
               store: { select: { id: true, name: true } },
             },
           },
-          customer: { select: { id: true, name: true, phone: true } },
+          customer: { select: customerWithMembershipSelect },
         },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -213,7 +225,8 @@ export const getBookingList = async (req: GetBookingListRequest, res: Response, 
       prisma.booking.count({ where }),
     ])
 
-    res.sendSuccess(createPaginationResult(bookings, total, page, pageSize))
+    const enrichedBookings = bookings.map(booking => enrichBookingWithMembership(booking))
+    res.sendSuccess(createPaginationResult(enrichedBookings, total, page, pageSize))
   } catch (error) {
     next(error)
   }
@@ -234,7 +247,17 @@ export const getBookingById = async (req: GetBookingByIdRequest, res: Response, 
             store: { select: { id: true, name: true } },
           },
         },
-        customer: true,
+        customer: {
+          include: {
+            membershipAccount: {
+              select: {
+                id: true,
+                balance: true,
+                isActive: true,
+              },
+            },
+          },
+        },
       },
     })
 
@@ -246,7 +269,7 @@ export const getBookingById = async (req: GetBookingByIdRequest, res: Response, 
       throw new AppError('预约不属于该门店', 404)
     }
 
-    res.sendSuccess(booking)
+    res.sendSuccess(enrichBookingWithMembership(booking))
   } catch (error) {
     next(error)
   }
@@ -334,7 +357,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
               store: { select: { id: true, name: true } },
             },
           },
-          customer: { select: { id: true, name: true, phone: true } },
+          customer: { select: customerWithMembershipSelect },
         },
       })
 
@@ -418,7 +441,7 @@ export const updateBooking = async (req: UpdateBookingRequest, res: Response, ne
       : '预约更新成功'
 
     const response: any = {
-      booking: result.booking,
+      booking: enrichBookingWithMembership(result.booking),
       waitlistProcessed: waitlistResults.length,
       convertedWaitlists: waitlistResults,
     }

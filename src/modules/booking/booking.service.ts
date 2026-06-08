@@ -1,6 +1,39 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { Booking, BookingStatus, Prisma } from '@prisma/client'
+import { Booking, BookingStatus, Prisma, MembershipAccount } from '@prisma/client'
+
+export interface MembershipAccountInfo {
+  id: number
+  balance: Prisma.Decimal
+  isActive: boolean
+}
+
+export const getActiveMembershipAccount = (
+  customer: { membershipAccount?: MembershipAccount | null }
+): MembershipAccountInfo | null => {
+  const account = customer.membershipAccount
+  if (account && account.isActive) {
+    return {
+      id: account.id,
+      balance: account.balance,
+      isActive: account.isActive,
+    }
+  }
+  return null
+}
+
+export const customerWithMembershipSelect = {
+  id: true,
+  name: true,
+  phone: true,
+  membershipAccount: {
+    select: {
+      id: true,
+      balance: true,
+      isActive: true,
+    },
+  },
+}
 
 export interface BookingCreateData {
   sessionId: number
@@ -47,7 +80,7 @@ export const createBookingWithSessionUpdate = async (
           host: { select: { id: true, name: true } },
         },
       },
-      customer: { select: { id: true, name: true, phone: true } },
+      customer: { select: customerWithMembershipSelect },
     },
   })
 
