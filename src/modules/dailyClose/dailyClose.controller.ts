@@ -6,6 +6,8 @@ import {
   dailyCloseQuerySchema,
   dailyCloseVoidSchema,
   dailyCloseSummaryQuerySchema,
+  dailyCloseDiffQuerySchema,
+  dailyCloseRecloseSchema,
   idParamSchema,
 } from '../../common/schemas'
 import {
@@ -14,6 +16,8 @@ import {
   getDailyCloseDetail,
   voidAndRecreateDailyClose,
   getDailyCloseSummary,
+  getDailyCloseDiff,
+  recloseDailyClose,
 } from './dailyClose.service'
 
 type CreateDailyCloseRequest = TypedRequest<
@@ -44,6 +48,18 @@ type GetDailyCloseSummaryRequest = TypedRequest<
   Record<string, never>,
   InferSchemaType<typeof dailyCloseSummaryQuerySchema>,
   Record<string, never>
+>
+
+type GetDailyCloseDiffRequest = TypedRequest<
+  Record<string, never>,
+  InferSchemaType<typeof dailyCloseDiffQuerySchema>,
+  Record<string, never>
+>
+
+type RecloseDailyCloseRequest = TypedRequest<
+  Record<string, never>,
+  Record<string, never>,
+  InferSchemaType<typeof dailyCloseRecloseSchema>
 >
 
 export const create = async (req: CreateDailyCloseRequest, res: Response, next: NextFunction) => {
@@ -98,6 +114,26 @@ export const getSummary = async (req: GetDailyCloseSummaryRequest, res: Response
     const { storeId, startDate, endDate } = req.query
     const result = await getDailyCloseSummary({ storeId, startDate, endDate })
     res.sendSuccess(result)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const getDiff = async (req: GetDailyCloseDiffRequest, res: Response, next: NextFunction) => {
+  try {
+    const { storeId, businessDate } = req.query
+    const result = await getDailyCloseDiff({ storeId, businessDate })
+    res.sendSuccess(result)
+  } catch (error) {
+    next(error)
+  }
+}
+
+export const reclose = async (req: RecloseDailyCloseRequest, res: Response, next: NextFunction) => {
+  try {
+    const { storeId, businessDate, operator, remark } = req.body
+    const result = await recloseDailyClose({ storeId, businessDate, operator, remark })
+    res.sendSuccess(result, '日结差异重结成功')
   } catch (error) {
     next(error)
   }

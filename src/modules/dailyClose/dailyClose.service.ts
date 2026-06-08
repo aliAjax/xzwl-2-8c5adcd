@@ -1,6 +1,6 @@
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
-import { Prisma, SessionStatus, BookingStatus, MembershipTransactionType, MembershipTransactionStatus, StoreDailyCloseStatus } from '@prisma/client'
+import { Prisma, SessionStatus, BookingStatus, MembershipTransactionType, MembershipTransactionStatus, StoreDailyCloseStatus, StoreDailyClose, StoreDailyCloseBooking, StoreDailyCloseSession, StoreDailyCloseTransaction } from '@prisma/client'
 import dayjs from 'dayjs'
 
 export interface DailyCloseCreateData {
@@ -13,6 +13,122 @@ export interface DailyCloseCreateData {
 export interface DailyCloseVoidData {
   operator?: string
   remark?: string
+}
+
+export interface DailyCloseDiffData {
+  storeId: number
+  businessDate: Date
+}
+
+export interface DailyCloseRecloseData {
+  storeId: number
+  businessDate: Date
+  operator?: string
+  remark?: string
+}
+
+export type DiffChangeType = 'ADDED' | 'REMOVED' | 'MODIFIED'
+
+export interface BookingDiffItem {
+  changeType: DiffChangeType
+  bookingId: number | null
+  sessionId: number
+  customerName: string
+  customerPhone: string
+  playerCount: number
+  sessionPrice: Prisma.Decimal
+  bookingAmount: Prisma.Decimal
+  useMembership: boolean
+  membershipAmount: Prisma.Decimal
+  original?: {
+    bookingId: number
+    playerCount: number
+    bookingAmount: Prisma.Decimal
+    useMembership: boolean
+    membershipAmount: Prisma.Decimal
+  }
+}
+
+export interface TransactionDiffItem {
+  changeType: DiffChangeType
+  transactionId: number | null
+  customerName: string
+  customerPhone: string
+  type: MembershipTransactionType
+  amount: Prisma.Decimal
+  balanceAfter: Prisma.Decimal
+  status: MembershipTransactionStatus
+  remark: string | null
+  operator: string | null
+  relatedBookingId: number | null
+  transactionCreatedAt: Date
+  original?: {
+    transactionId: number
+    amount: Prisma.Decimal
+    balanceAfter: Prisma.Decimal
+    status: MembershipTransactionStatus
+  }
+}
+
+export interface SessionDiffItem {
+  changeType: DiffChangeType
+  sessionId: number | null
+  scriptName: string
+  hostName: string
+  roomName: string
+  startTime: Date
+  endTime: Date
+  price: Prisma.Decimal
+  playerCount: number
+  bookingCount: number
+  sessionAmount: Prisma.Decimal
+  original?: {
+    sessionId: number
+    playerCount: number
+    bookingCount: number
+    sessionAmount: Prisma.Decimal
+  }
+}
+
+export interface DailyCloseDiffResult {
+  originalClose: {
+    id: number
+    businessDate: Date
+    createdAt: Date
+    operator: string | null
+    completedSessionCount: number
+    totalBookingCount: number
+    totalPlayerCount: number
+    receivableAmount: Prisma.Decimal
+    membershipConsume: Prisma.Decimal
+    membershipRecharge: Prisma.Decimal
+    refundAmount: Prisma.Decimal
+    discrepancyAmount: Prisma.Decimal
+  }
+  currentData: {
+    completedSessionCount: number
+    totalBookingCount: number
+    totalPlayerCount: number
+    receivableAmount: Prisma.Decimal
+    membershipConsume: Prisma.Decimal
+    membershipRecharge: Prisma.Decimal
+    refundAmount: Prisma.Decimal
+    discrepancyAmount: Prisma.Decimal
+  }
+  diff: {
+    completedSessionCount: number
+    totalBookingCount: number
+    totalPlayerCount: number
+    receivableAmount: Prisma.Decimal
+    membershipConsume: Prisma.Decimal
+    membershipRecharge: Prisma.Decimal
+    refundAmount: Prisma.Decimal
+    discrepancyAmount: Prisma.Decimal
+  }
+  sessionDiffs: SessionDiffItem[]
+  bookingDiffs: BookingDiffItem[]
+  transactionDiffs: TransactionDiffItem[]
+  hasDifferences: boolean
 }
 
 const getDateRange = (date: Date) => {
@@ -574,4 +690,451 @@ export const getDailyCloseSummary = async (query: {
   }
 
   return result
+}
+
+const getLatestNormalDailyClose = async (
+  tx: Prisma.TransactionClient | typeof prisma,
+  storeId: number,
+  businessDate: Date
+) => {
+  const { startOfDay } = getDateRange(businessDate)
+  return tx.storeDailyClose.findFirst({
+    where: {
+      storeId,
+      businessDate: startOfDay,
+      status: StoreDailyCloseStatus.NORMAL,
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      sessionSnapshots: true,
+      bookingSnapshots: true,
+      transactionSnapshots: true,
+    },
+  })
+}
+
+const toDecimal = (value: unknown): Prisma.Decimal => {
+  if (value instanceof Prisma.Decimal) return value
+  return new Prisma.Decimal(String(value))
+}
+
+const toDate = (value: unknown): Date => {
+  if (value instanceof Date) return value
+  return new Date(String(value))
+}
+
+const compareSessions = (
+  original: StoreDailyCloseSession[],
+  current: Prisma.StoreDailyCloseSessionCreateManyDailyCloseInput[]
+): SessionDiffItem[] => {
+  const diffs: SessionDiffItem[] = []
+  const originalMap = new Map(original.map(s => [s.sessionId, s]))
+  const currentMap = new Map(current.map(s => [s.sessionId!, s]))
+
+  for (const [sessionId, orig] of originalMap) {
+    const curr = currentMap.get(sessionId)
+    if (!curr) {
+      diffs.push({
+        changeType: 'REMOVED',
+        sessionId: orig.sessionId,
+        scriptName: orig.scriptName,
+        hostName: orig.hostName,
+        roomName: orig.roomName,
+        startTime: orig.startTime,
+        endTime: orig.endTime,
+        price: orig.price,
+        playerCount: 0,
+        bookingCount: 0,
+        sessionAmount: new Prisma.Decimal(0),
+        original: {
+          sessionId: orig.sessionId,
+          playerCount: orig.playerCount,
+          bookingCount: orig.bookingCount,
+          sessionAmount: orig.sessionAmount,
+        },
+      })
+    } else if (
+      orig.playerCount !== curr.playerCount ||
+      orig.bookingCount !== curr.bookingCount ||
+      !orig.sessionAmount.equals(toDecimal(curr.sessionAmount))
+    ) {
+      diffs.push({
+        changeType: 'MODIFIED',
+        sessionId: curr.sessionId!,
+        scriptName: curr.scriptName,
+        hostName: curr.hostName,
+        roomName: curr.roomName,
+        startTime: toDate(curr.startTime),
+        endTime: toDate(curr.endTime),
+        price: toDecimal(curr.price),
+        playerCount: curr.playerCount!,
+        bookingCount: curr.bookingCount!,
+        sessionAmount: toDecimal(curr.sessionAmount),
+        original: {
+          sessionId: orig.sessionId,
+          playerCount: orig.playerCount,
+          bookingCount: orig.bookingCount,
+          sessionAmount: orig.sessionAmount,
+        },
+      })
+    }
+  }
+
+  for (const [sessionId, curr] of currentMap) {
+    if (!originalMap.has(sessionId)) {
+      diffs.push({
+        changeType: 'ADDED',
+        sessionId: curr.sessionId!,
+        scriptName: curr.scriptName,
+        hostName: curr.hostName,
+        roomName: curr.roomName,
+        startTime: toDate(curr.startTime),
+        endTime: toDate(curr.endTime),
+        price: toDecimal(curr.price),
+        playerCount: curr.playerCount!,
+        bookingCount: curr.bookingCount!,
+        sessionAmount: toDecimal(curr.sessionAmount),
+      })
+    }
+  }
+
+  return diffs.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
+}
+
+const compareBookings = (
+  original: StoreDailyCloseBooking[],
+  current: Prisma.StoreDailyCloseBookingCreateManyDailyCloseInput[]
+): BookingDiffItem[] => {
+  const diffs: BookingDiffItem[] = []
+  const originalMap = new Map(original.map(b => [b.bookingId, b]))
+  const currentMap = new Map(current.map(b => [b.bookingId!, b]))
+
+  for (const [bookingId, orig] of originalMap) {
+    const curr = currentMap.get(bookingId)
+    if (!curr) {
+      diffs.push({
+        changeType: 'REMOVED',
+        bookingId: null,
+        sessionId: orig.sessionId,
+        customerName: orig.customerName,
+        customerPhone: orig.customerPhone,
+        playerCount: 0,
+        sessionPrice: orig.sessionPrice,
+        bookingAmount: new Prisma.Decimal(0),
+        useMembership: false,
+        membershipAmount: new Prisma.Decimal(0),
+        original: {
+          bookingId: orig.bookingId,
+          playerCount: orig.playerCount,
+          bookingAmount: orig.bookingAmount,
+          useMembership: orig.useMembership,
+          membershipAmount: orig.membershipAmount,
+        },
+      })
+    } else if (
+      orig.playerCount !== curr.playerCount ||
+      !orig.bookingAmount.equals(toDecimal(curr.bookingAmount)) ||
+      orig.useMembership !== curr.useMembership ||
+      !orig.membershipAmount.equals(toDecimal(curr.membershipAmount))
+    ) {
+      diffs.push({
+        changeType: 'MODIFIED',
+        bookingId: curr.bookingId!,
+        sessionId: curr.sessionId!,
+        customerName: curr.customerName,
+        customerPhone: curr.customerPhone,
+        playerCount: curr.playerCount!,
+        sessionPrice: toDecimal(curr.sessionPrice),
+        bookingAmount: toDecimal(curr.bookingAmount),
+        useMembership: curr.useMembership!,
+        membershipAmount: toDecimal(curr.membershipAmount),
+        original: {
+          bookingId: orig.bookingId,
+          playerCount: orig.playerCount,
+          bookingAmount: orig.bookingAmount,
+          useMembership: orig.useMembership,
+          membershipAmount: orig.membershipAmount,
+        },
+      })
+    }
+  }
+
+  for (const [bookingId, curr] of currentMap) {
+    if (!originalMap.has(bookingId)) {
+      diffs.push({
+        changeType: 'ADDED',
+        bookingId: curr.bookingId!,
+        sessionId: curr.sessionId!,
+        customerName: curr.customerName,
+        customerPhone: curr.customerPhone,
+        playerCount: curr.playerCount!,
+        sessionPrice: toDecimal(curr.sessionPrice),
+        bookingAmount: toDecimal(curr.bookingAmount),
+        useMembership: curr.useMembership!,
+        membershipAmount: toDecimal(curr.membershipAmount),
+      })
+    }
+  }
+
+  return diffs.sort((a, b) => {
+    if (a.changeType === 'ADDED' && b.changeType !== 'ADDED') return -1
+    if (a.changeType !== 'ADDED' && b.changeType === 'ADDED') return 1
+    if (a.changeType === 'REMOVED' && b.changeType !== 'REMOVED') return -1
+    if (a.changeType !== 'REMOVED' && b.changeType === 'REMOVED') return 1
+    return (a.bookingId || 0) - (b.bookingId || 0)
+  })
+}
+
+const compareTransactions = (
+  original: StoreDailyCloseTransaction[],
+  current: Prisma.StoreDailyCloseTransactionCreateManyDailyCloseInput[]
+): TransactionDiffItem[] => {
+  const diffs: TransactionDiffItem[] = []
+  const originalMap = new Map(original.map(t => [t.transactionId, t]))
+  const currentMap = new Map(current.map(t => [t.transactionId!, t]))
+
+  for (const [transactionId, orig] of originalMap) {
+    const curr = currentMap.get(transactionId)
+    if (!curr) {
+      diffs.push({
+        changeType: 'REMOVED',
+        transactionId: null,
+        customerName: orig.customerName,
+        customerPhone: orig.customerPhone,
+        type: orig.type,
+        amount: new Prisma.Decimal(0),
+        balanceAfter: orig.balanceAfter,
+        status: orig.status,
+        remark: orig.remark,
+        operator: orig.operator,
+        relatedBookingId: orig.relatedBookingId,
+        transactionCreatedAt: orig.transactionCreatedAt,
+        original: {
+          transactionId: orig.transactionId,
+          amount: orig.amount,
+          balanceAfter: orig.balanceAfter,
+          status: orig.status,
+        },
+      })
+    } else if (
+      !orig.amount.equals(toDecimal(curr.amount)) ||
+      !orig.balanceAfter.equals(toDecimal(curr.balanceAfter)) ||
+      orig.status !== curr.status ||
+      orig.type !== curr.type
+    ) {
+      diffs.push({
+        changeType: 'MODIFIED',
+        transactionId: curr.transactionId!,
+        customerName: curr.customerName,
+        customerPhone: curr.customerPhone,
+        type: curr.type,
+        amount: toDecimal(curr.amount),
+        balanceAfter: toDecimal(curr.balanceAfter),
+        status: curr.status!,
+        remark: curr.remark || null,
+        operator: curr.operator || null,
+        relatedBookingId: curr.relatedBookingId || null,
+        transactionCreatedAt: toDate(curr.transactionCreatedAt),
+        original: {
+          transactionId: orig.transactionId,
+          amount: orig.amount,
+          balanceAfter: orig.balanceAfter,
+          status: orig.status,
+        },
+      })
+    }
+  }
+
+  for (const [transactionId, curr] of currentMap) {
+    if (!originalMap.has(transactionId)) {
+      diffs.push({
+        changeType: 'ADDED',
+        transactionId: curr.transactionId!,
+        customerName: curr.customerName,
+        customerPhone: curr.customerPhone,
+        type: curr.type,
+        amount: toDecimal(curr.amount),
+        balanceAfter: toDecimal(curr.balanceAfter),
+        status: curr.status!,
+        remark: curr.remark || null,
+        operator: curr.operator || null,
+        relatedBookingId: curr.relatedBookingId || null,
+        transactionCreatedAt: toDate(curr.transactionCreatedAt),
+      })
+    }
+  }
+
+  return diffs.sort((a, b) => {
+    if (a.changeType === 'ADDED' && b.changeType !== 'ADDED') return -1
+    if (a.changeType !== 'ADDED' && b.changeType === 'ADDED') return 1
+    if (a.changeType === 'REMOVED' && b.changeType !== 'REMOVED') return -1
+    if (a.changeType !== 'REMOVED' && b.changeType === 'REMOVED') return 1
+    return a.transactionCreatedAt.getTime() - b.transactionCreatedAt.getTime()
+  })
+}
+
+export const getDailyCloseDiff = async (data: DailyCloseDiffData): Promise<DailyCloseDiffResult> => {
+  const { storeId, businessDate } = data
+
+  const store = await prisma.store.findUnique({ where: { id: storeId } })
+  if (!store) {
+    throw new AppError('门店不存在', 404)
+  }
+
+  const originalClose = await getLatestNormalDailyClose(prisma, storeId, businessDate)
+  if (!originalClose) {
+    throw new AppError('该门店该营业日期暂无有效的日结单', 404)
+  }
+
+  const { startOfDay } = getDateRange(businessDate)
+  const normalizedDate = startOfDay
+
+  const { summary: currentSummary, sessionSnapshots, bookingSnapshots, transactionSnapshots } =
+    await calculateDailyCloseData(prisma, storeId, normalizedDate)
+
+  const sessionDiffs = compareSessions(originalClose.sessionSnapshots, sessionSnapshots)
+  const bookingDiffs = compareBookings(originalClose.bookingSnapshots, bookingSnapshots)
+  const transactionDiffs = compareTransactions(originalClose.transactionSnapshots, transactionSnapshots)
+
+  const diff = {
+    completedSessionCount: currentSummary.completedSessionCount - originalClose.completedSessionCount,
+    totalBookingCount: currentSummary.totalBookingCount - originalClose.totalBookingCount,
+    totalPlayerCount: currentSummary.totalPlayerCount - originalClose.totalPlayerCount,
+    receivableAmount: currentSummary.receivableAmount.minus(originalClose.receivableAmount),
+    membershipConsume: currentSummary.membershipConsume.minus(originalClose.membershipConsume),
+    membershipRecharge: currentSummary.membershipRecharge.minus(originalClose.membershipRecharge),
+    refundAmount: currentSummary.refundAmount.minus(originalClose.refundAmount),
+    discrepancyAmount: currentSummary.discrepancyAmount.minus(originalClose.discrepancyAmount),
+  }
+
+  const hasDifferences =
+    diff.completedSessionCount !== 0 ||
+    diff.totalBookingCount !== 0 ||
+    diff.totalPlayerCount !== 0 ||
+    !diff.receivableAmount.isZero() ||
+    !diff.membershipConsume.isZero() ||
+    !diff.membershipRecharge.isZero() ||
+    !diff.refundAmount.isZero() ||
+    !diff.discrepancyAmount.isZero()
+
+  return {
+    originalClose: {
+      id: originalClose.id,
+      businessDate: originalClose.businessDate,
+      createdAt: originalClose.createdAt,
+      operator: originalClose.operator,
+      completedSessionCount: originalClose.completedSessionCount,
+      totalBookingCount: originalClose.totalBookingCount,
+      totalPlayerCount: originalClose.totalPlayerCount,
+      receivableAmount: originalClose.receivableAmount,
+      membershipConsume: originalClose.membershipConsume,
+      membershipRecharge: originalClose.membershipRecharge,
+      refundAmount: originalClose.refundAmount,
+      discrepancyAmount: originalClose.discrepancyAmount,
+    },
+    currentData: {
+      completedSessionCount: currentSummary.completedSessionCount,
+      totalBookingCount: currentSummary.totalBookingCount,
+      totalPlayerCount: currentSummary.totalPlayerCount,
+      receivableAmount: currentSummary.receivableAmount,
+      membershipConsume: currentSummary.membershipConsume,
+      membershipRecharge: currentSummary.membershipRecharge,
+      refundAmount: currentSummary.refundAmount,
+      discrepancyAmount: currentSummary.discrepancyAmount,
+    },
+    diff,
+    sessionDiffs,
+    bookingDiffs,
+    transactionDiffs,
+    hasDifferences,
+  }
+}
+
+export const recloseDailyClose = async (data: DailyCloseRecloseData) => {
+  const { storeId, businessDate, operator, remark } = data
+
+  const store = await prisma.store.findUnique({ where: { id: storeId } })
+  if (!store) {
+    throw new AppError('门店不存在', 404)
+  }
+
+  const { startOfDay } = getDateRange(businessDate)
+  const normalizedDate = startOfDay
+
+  return prisma.$transaction(async tx => {
+    const originalClose = await getLatestNormalDailyClose(tx, storeId, normalizedDate)
+    if (!originalClose) {
+      throw new AppError('该门店该营业日期暂无有效的日结单', 404)
+    }
+
+    const hasActiveVoid = await tx.storeDailyClose.findFirst({
+      where: {
+        storeId,
+        businessDate: normalizedDate,
+        status: StoreDailyCloseStatus.NORMAL,
+        originalCloseId: { not: null },
+      },
+    })
+
+    if (hasActiveVoid) {
+      throw new AppError('该营业日期已有差异重结后的有效日结单，请先确认是否需要再次重结', 400)
+    }
+
+    await tx.storeDailyClose.update({
+      where: { id: originalClose.id },
+      data: {
+        status: StoreDailyCloseStatus.VOIDED,
+      },
+    })
+
+    const { summary, sessionSnapshots, bookingSnapshots, transactionSnapshots } =
+      await calculateDailyCloseData(tx, storeId, normalizedDate)
+
+    const newClose = await tx.storeDailyClose.create({
+      data: {
+        storeId,
+        businessDate: normalizedDate,
+        status: StoreDailyCloseStatus.NORMAL,
+        ...summary,
+        operator,
+        remark,
+        originalCloseId: originalClose.id,
+        sessionSnapshots: {
+          createMany: {
+            data: sessionSnapshots,
+          },
+        },
+        bookingSnapshots: {
+          createMany: {
+            data: bookingSnapshots,
+          },
+        },
+        transactionSnapshots: {
+          createMany: {
+            data: transactionSnapshots,
+          },
+        },
+      },
+      include: {
+        store: { select: { id: true, name: true } },
+        originalClose: { select: { id: true, createdAt: true, operator: true } },
+      },
+    })
+
+    return {
+      voidedClose: {
+        id: originalClose.id,
+        status: StoreDailyCloseStatus.VOIDED,
+        completedSessionCount: originalClose.completedSessionCount,
+        totalBookingCount: originalClose.totalBookingCount,
+        totalPlayerCount: originalClose.totalPlayerCount,
+        receivableAmount: originalClose.receivableAmount,
+        membershipConsume: originalClose.membershipConsume,
+        membershipRecharge: originalClose.membershipRecharge,
+        refundAmount: originalClose.refundAmount,
+        discrepancyAmount: originalClose.discrepancyAmount,
+      },
+      newClose,
+    }
+  })
 }

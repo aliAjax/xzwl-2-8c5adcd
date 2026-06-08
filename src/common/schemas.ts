@@ -530,6 +530,18 @@ export const dailyCloseSummaryQuerySchema = z.object({
   path: ['endDate'],
 })
 
+export const dailyCloseDiffQuerySchema = z.object({
+  storeId: z.coerce.number().int().positive(),
+  businessDate: z.coerce.date(),
+})
+
+export const dailyCloseRecloseSchema = z.object({
+  storeId: z.coerce.number().int().positive(),
+  businessDate: z.coerce.date(),
+  operator: z.string().optional(),
+  remark: z.string().optional(),
+})
+
 export const notificationQuerySchema = z.object({
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(100).optional().default(10),
