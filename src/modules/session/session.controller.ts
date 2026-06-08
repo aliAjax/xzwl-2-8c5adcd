@@ -2,7 +2,7 @@ import { Response, NextFunction } from 'express'
 import prisma from '../../prisma/client'
 import { AppError } from '../../middleware/errorHandler'
 import { createPaginationResult } from '../../common/types'
-import { SessionStatus, NotificationType, NotificationChannel, NotificationStatus, BookingStatus } from '@prisma/client'
+import { SessionStatus, NotificationType, NotificationChannel, NotificationStatus, BookingStatus, WaitlistStatus } from '@prisma/client'
 import { TypedRequest, InferSchemaType } from '../../common/express'
 import {
   sessionSchema,
@@ -244,9 +244,18 @@ export const getSessionList = async (req: GetSessionListRequest, res: Response, 
           script: { select: { id: true, name: true, minPlayers: true, maxPlayers: true } },
           host: { select: { id: true, name: true, phone: true } },
           room: { select: { id: true, name: true, capacity: true } },
-          _count: {
-            select: { bookings: true },
+          bookings: {
+            select: {
+              id: true,
+              status: true
+            }
           },
+          waitlists: {
+            select: {
+              id: true,
+              status: true
+            }
+          }
         },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -255,7 +264,32 @@ export const getSessionList = async (req: GetSessionListRequest, res: Response, 
       prisma.session.count({ where }),
     ])
 
-    res.sendSuccess(createPaginationResult(sessions, total, page, pageSize))
+    const resultList = sessions.map(session => {
+      const bookingStats = {
+        total: session.bookings.length,
+        pending: session.bookings.filter(b => b.status === BookingStatus.PENDING).length,
+        confirmed: session.bookings.filter(b => b.status === BookingStatus.CONFIRMED).length,
+        cancelled: session.bookings.filter(b => b.status === BookingStatus.CANCELLED).length
+      }
+
+      const waitlistStats = {
+        total: session.waitlists.length,
+        pending: session.waitlists.filter(w => w.status === WaitlistStatus.PENDING).length,
+        confirmed: session.waitlists.filter(w => w.status === WaitlistStatus.CONFIRMED).length,
+        cancelled: session.waitlists.filter(w => w.status === WaitlistStatus.CANCELLED).length,
+        expired: session.waitlists.filter(w => w.status === WaitlistStatus.EXPIRED).length
+      }
+
+      return {
+        ...session,
+        bookingStats,
+        waitlistStats,
+        bookings: undefined,
+        waitlists: undefined
+      }
+    })
+
+    res.sendSuccess(createPaginationResult(resultList, total, page, pageSize))
   } catch (error) {
     next(error)
   }
@@ -289,6 +323,11 @@ export const getSessionById = async (req: GetSessionByIdRequest, res: Response, 
             customer: { select: { id: true, name: true, phone: true } },
           },
         },
+        waitlists: {
+          include: {
+            customer: { select: { id: true, name: true, phone: true } },
+          },
+        },
       },
     })
 
@@ -300,7 +339,28 @@ export const getSessionById = async (req: GetSessionByIdRequest, res: Response, 
       throw new AppError('场次不属于该门店', 404)
     }
 
-    res.sendSuccess(session)
+    const bookingStats = {
+      total: session.bookings.length,
+      pending: session.bookings.filter(b => b.status === BookingStatus.PENDING).length,
+      confirmed: session.bookings.filter(b => b.status === BookingStatus.CONFIRMED).length,
+      cancelled: session.bookings.filter(b => b.status === BookingStatus.CANCELLED).length
+    }
+
+    const waitlistStats = {
+      total: session.waitlists.length,
+      pending: session.waitlists.filter(w => w.status === WaitlistStatus.PENDING).length,
+      confirmed: session.waitlists.filter(w => w.status === WaitlistStatus.CONFIRMED).length,
+      cancelled: session.waitlists.filter(w => w.status === WaitlistStatus.CANCELLED).length,
+      expired: session.waitlists.filter(w => w.status === WaitlistStatus.EXPIRED).length
+    }
+
+    const result = {
+      ...session,
+      bookingStats,
+      waitlistStats
+    }
+
+    res.sendSuccess(result)
   } catch (error) {
     next(error)
   }
@@ -402,39 +462,108 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
 
     const statusChangedToCancelled = status === SessionStatus.CANCELLED && existingSession.status !== SessionStatus.CANCELLED
 
-    const session = await prisma.session.update({
-      where: { id },
-      data: req.body,
-      include: {
-        store: { select: { id: true, name: true } },
-        script: { select: { id: true, name: true } },
-        host: { select: { id: true, name: true } },
-        room: { select: { id: true, name: true, capacity: true } },
-      },
-    })
+    let session: any
+    let cancellationResult: any = null
 
     if (statusChangedToCancelled) {
-      try {
-        const sessionWithBookings = await prisma.session.findUnique({
+      const result = await prisma.$transaction(async (tx) => {
+        const updatedSession = await tx.session.update({
           where: { id },
+          data: req.body,
           include: {
-            script: true,
-            store: true,
-            bookings: {
-              where: {
-                status: {
-                  notIn: [BookingStatus.CANCELLED]
-                }
-              },
-              include: {
-                customer: true
-              }
+            store: { select: { id: true, name: true } },
+            script: { select: { id: true, name: true } },
+            host: { select: { id: true, name: true } },
+            room: { select: { id: true, name: true, capacity: true } },
+          },
+        })
+
+        const activeBookings = await tx.booking.findMany({
+          where: {
+            sessionId: id,
+            status: {
+              notIn: [BookingStatus.CANCELLED]
             }
+          },
+          include: {
+            customer: true
           }
         })
 
-        if (sessionWithBookings) {
-          for (const booking of sessionWithBookings.bookings) {
+        const pendingWaitlists = await tx.waitlist.findMany({
+          where: {
+            sessionId: id,
+            status: WaitlistStatus.PENDING
+          },
+          include: {
+            customer: true
+          }
+        })
+
+        const cancelledBookings = await tx.booking.updateMany({
+          where: {
+            sessionId: id,
+            status: {
+              notIn: [BookingStatus.CANCELLED]
+            }
+          },
+          data: {
+            status: BookingStatus.CANCELLED
+          }
+        })
+
+        const totalCancelledPlayers = activeBookings.reduce((sum, b) => sum + b.playerCount, 0)
+        if (totalCancelledPlayers > 0) {
+          await tx.session.update({
+            where: { id },
+            data: {
+              currentPlayers: {
+                decrement: totalCancelledPlayers
+              }
+            }
+          })
+        }
+
+        const expiredWaitlists = await tx.waitlist.updateMany({
+          where: {
+            sessionId: id,
+            status: WaitlistStatus.PENDING
+          },
+          data: {
+            status: WaitlistStatus.EXPIRED
+          }
+        })
+
+        return {
+          session: updatedSession,
+          cancelledBookings: {
+            count: cancelledBookings.count,
+            bookings: activeBookings
+          },
+          expiredWaitlists: {
+            count: expiredWaitlists.count,
+            waitlists: pendingWaitlists
+          }
+        }
+      })
+
+      session = result.session
+      cancellationResult = {
+        cancelledBookingCount: result.cancelledBookings.count,
+        expiredWaitlistCount: result.expiredWaitlists.count
+      }
+
+      try {
+        const sessionWithDetails = await prisma.session.findUnique({
+          where: { id },
+          include: {
+            script: true,
+            store: true
+          }
+        })
+
+        if (sessionWithDetails) {
+          for (const booking of result.cancelledBookings.bookings) {
             try {
               const idempotencyKey = generateIdempotencyKey(
                 NotificationType.SESSION_CANCELLED,
@@ -448,9 +577,9 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
               if (!existingNotification && booking.customer) {
                 const templateParams: SessionCancelledParams = {
                   sessionId: id,
-                  scriptName: sessionWithBookings.script.name,
-                  startTime: sessionWithBookings.startTime.toLocaleString('zh-CN'),
-                  storeName: sessionWithBookings.store?.name
+                  scriptName: sessionWithDetails.script.name,
+                  startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
+                  storeName: sessionWithDetails.store?.name
                 }
 
                 await createNotificationTask({
@@ -472,13 +601,66 @@ export const updateSession = async (req: UpdateSessionRequest, res: Response, ne
               console.error(`Failed to create notification for booking ${booking.id}:`, bookingNotificationError)
             }
           }
+
+          for (const waitlist of result.expiredWaitlists.waitlists) {
+            try {
+              const idempotencyKey = generateIdempotencyKey(
+                NotificationType.SESSION_CANCELLED,
+                `session:${id}:waitlist:${waitlist.id}`
+              )
+
+              const existingNotification = await prisma.notificationTask.findUnique({
+                where: { idempotencyKey }
+              })
+
+              if (!existingNotification && waitlist.customer) {
+                const templateParams: SessionCancelledParams = {
+                  sessionId: id,
+                  scriptName: sessionWithDetails.script.name,
+                  startTime: sessionWithDetails.startTime.toLocaleString('zh-CN'),
+                  storeName: sessionWithDetails.store?.name
+                }
+
+                await createNotificationTask({
+                  type: NotificationType.SESSION_CANCELLED,
+                  channel: NotificationChannel.SMS,
+                  recipient: {
+                    name: waitlist.customer.name,
+                    phone: waitlist.customer.phone
+                  },
+                  templateCode: 'SESSION_CANCELLED',
+                  templateParams,
+                  idempotencyKey,
+                  relatedSessionId: id,
+                  relatedCustomerId: waitlist.customerId
+                })
+              }
+            } catch (waitlistNotificationError) {
+              console.error(`Failed to create notification for waitlist ${waitlist.id}:`, waitlistNotificationError)
+            }
+          }
         }
       } catch (notificationError) {
         console.error('Failed to create notifications for session cancellation:', notificationError)
       }
+    } else {
+      session = await prisma.session.update({
+        where: { id },
+        data: req.body,
+        include: {
+          store: { select: { id: true, name: true } },
+          script: { select: { id: true, name: true } },
+          host: { select: { id: true, name: true } },
+          room: { select: { id: true, name: true, capacity: true } },
+        },
+      })
     }
 
-    res.sendSuccess(session, '场次更新成功')
+    const responseData = cancellationResult
+      ? { ...session, cancellationResult }
+      : session
+
+    res.sendSuccess(responseData, statusChangedToCancelled ? '场次取消成功' : '场次更新成功')
   } catch (error) {
     next(error)
   }
