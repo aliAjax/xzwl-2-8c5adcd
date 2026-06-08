@@ -60,44 +60,44 @@ jobs:
           node-version: '20'
           check-latest: true
 
-      - name: Cache npm dependencies
+      - name: Cache npm download cache
         id: cache-npm
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.npm
-            node_modules
+          path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
 
-      - name: Cache Prisma client
+      - name: Cache Prisma generated client
         id: cache-prisma
         uses: actions/cache@v4
         with:
-          path: |
-            node_modules/.prisma
-            src/prisma/generated
-          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma') }}
+          path: node_modules/.prisma
+          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-prisma-
 
       - name: Install dependencies
-        if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Validate Prisma schema
         run: npm run prisma:validate
 
-      - name: Generate Prisma client
-        if: steps.cache-prisma.outputs.cache-hit != 'true'
-        run: npm run prisma:generate
+      - name: Create shadow database for migration validation
+        run: |
+          PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -c "CREATE DATABASE xzwl_shadow;" || true
+        env:
+          PGPASSWORD: postgres
 
       - name: Validate database migrations
-        run: npx prisma migrate validate
+        run: npm run prisma:migrate:validate
+        env:
+          SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5433/xzwl_shadow?schema=public
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5433/xzwl_test?schema=public
 
-      - name: Run database migrations
-        run: npx prisma migrate deploy
+      - name: Generate Prisma client
+        run: npm run prisma:generate
 
       - name: TypeScript type check
         run: npm run typecheck
@@ -150,26 +150,30 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Restore npm dependencies
+      - name: Restore npm download cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.npm
-            node_modules
+          path: ~/.npm
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          fail-on-cache-miss: true
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-      - name: Restore Prisma client
+      - name: Restore Prisma generated client
         uses: actions/cache@v4
         with:
-          path: |
-            node_modules/.prisma
-            src/prisma/generated
-          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma') }}
-          fail-on-cache-miss: true
+          path: node_modules/.prisma
+          key: ${{ runner.os }}-prisma-${{ hashFiles('prisma/schema.prisma', 'package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-prisma-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
 
       - name: Run database migrations
-        run: npx prisma migrate deploy
+        run: npm run prisma:migrate:deploy
 
       - name: Run Jest tests with coverage
         run: npm run test -- --ci --coverage --maxWorkers=2
