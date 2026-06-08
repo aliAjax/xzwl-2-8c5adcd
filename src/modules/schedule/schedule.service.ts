@@ -53,7 +53,7 @@ interface DraftSessionWithRelations extends ScheduleDraftSession {
 interface ValidationContext {
   storeId: number
   storeSessions: Session[]
-  crossStoreHostSessions: (Session & { script: { name: string }; store: { name: string } })[]
+  hostSessions: (Session & { script: { name: string }; store: { name: string } })[]
   allProficiencies: HostProficiency[]
   allRestDays: HostRestDay[]
   allUnassignableSlots: ScheduleUnassignableSlot[]
@@ -805,7 +805,7 @@ const validateSingleDraft = (
     })
   }
 
-  const overlappingHostSessions = ctx.crossStoreHostSessions.filter(
+  const overlappingHostSessions = ctx.hostSessions.filter(
     s => s.hostId === draft.hostId &&
       s.status !== SessionStatus.CANCELLED &&
       s.status !== SessionStatus.COMPLETED &&
@@ -817,7 +817,7 @@ const validateSingleDraft = (
     ).join('; ')
     conflicts.push({
       type: ConflictType.SESSION_CONFLICT_HOST,
-      message: `主持人 "${draft.host.name}" 与已有正式场次冲突（跨门店检测）：${conflictInfo}`,
+      message: `主持人 "${draft.host.name}" 与已有正式场次冲突：${conflictInfo}`,
       details: {
         hostId: draft.hostId,
         overlappingSessions: overlappingHostSessions.map(s => ({
@@ -935,22 +935,21 @@ export const validateSchedulePlanForPublish = async (planId: number): Promise<Pu
 
   const hostIds = plan.draftSessions.map(ds => ds.hostId)
 
-  const [storeSessions, crossStoreHostSessions, allProficiencies, allRestDays] = await Promise.all([
+  const [storeSessions, hostSessions, allProficiencies, allRestDays] = await Promise.all([
     prisma.session.findMany({
       where: {
         storeId: plan.storeId,
         status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
-        startTime: { gte: minDate },
-        endTime: { lte: maxDate },
+        startTime: { lt: maxDate },
+        endTime: { gt: minDate },
       },
     }),
     prisma.session.findMany({
       where: {
         hostId: { in: hostIds },
-        storeId: { not: plan.storeId },
         status: { notIn: [SessionStatus.CANCELLED, SessionStatus.COMPLETED] },
-        startTime: { gte: minDate },
-        endTime: { lte: maxDate },
+        startTime: { lt: maxDate },
+        endTime: { gt: minDate },
       },
       include: {
         script: { select: { name: true } },
@@ -973,7 +972,7 @@ export const validateSchedulePlanForPublish = async (planId: number): Promise<Pu
   const ctx: ValidationContext = {
     storeId: plan.storeId,
     storeSessions,
-    crossStoreHostSessions,
+    hostSessions,
     allProficiencies,
     allRestDays,
     allUnassignableSlots: plan.unassignableSlots,
