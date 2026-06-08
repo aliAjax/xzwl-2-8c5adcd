@@ -330,6 +330,7 @@ export const waitlistQuerySchema = z.object({
   customerId: z.coerce.number().int().positive().optional(),
   status: z.nativeEnum(WaitlistStatus).optional(),
   keyword: z.string().optional(),
+  phone: z.string().optional(),
 })
 
 export const waitlistConfirmSchema = z.object({

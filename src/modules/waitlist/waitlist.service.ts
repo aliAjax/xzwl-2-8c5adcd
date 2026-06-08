@@ -321,6 +321,7 @@ export const getWaitlistById = async (id: number, storeId?: number) => {
         include: {
           script: true,
           host: { select: { id: true, name: true, phone: true } },
+          room: { select: { id: true, name: true } },
           store: { select: { id: true, name: true } },
         },
       },
@@ -348,6 +349,7 @@ export const getWaitlistList = async (
     status?: WaitlistStatus
     keyword?: string
     storeId?: number
+    phone?: string
   }
 ) => {
   const where: Record<string, unknown> = {}
@@ -355,6 +357,9 @@ export const getWaitlistList = async (
   if (filters?.customerId) where.customerId = filters.customerId
   if (filters?.status) where.status = filters.status
   if (filters?.storeId) where.session = { storeId: filters.storeId }
+  if (filters?.phone) {
+    where.customer = { phone: { contains: filters.phone } }
+  }
   if (filters?.keyword) {
     where.OR = [
       { customer: { name: { contains: filters.keyword } } },
@@ -370,6 +375,7 @@ export const getWaitlistList = async (
           include: {
             script: { select: { id: true, name: true } },
             host: { select: { id: true, name: true } },
+            room: { select: { id: true, name: true } },
             store: { select: { id: true, name: true } },
           },
         },
